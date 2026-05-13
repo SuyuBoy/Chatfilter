@@ -132,6 +132,19 @@ class StageTiming:
 
 
 class PipelineTimer:
+    """全管线逐环节计时器。
+
+    用法:
+      timer = PipelineTimer()
+      with timer.stage("①_cleanse") as st:
+          ... do work ...
+      # 退出 with 块时自动记录耗时
+
+    开关: PipelineTimer.enabled = False 关闭全部计时 (零开销)
+    """
+
+    enabled: bool = True  # 全局开关, False=零开销
+
     def __init__(self):
         self.stages: dict[str, StageTiming] = {}
         self._order: list[str] = []
@@ -143,12 +156,35 @@ class PipelineTimer:
         return self.stages[name]
 
     def record(self, name: str, elapsed_ms: float) -> None:
+        if not self.enabled:
+            return
         self._ensure(name).record(elapsed_ms)
 
+    def stage(self, name: str):
+        """上下文管理器: 自动计时。"""
+        return _TimingStage(self, name)
+
     def stats(self) -> dict:
+        if not self.stages:
+            return {}
         return {name: {"avg_ms": round(self.stages[name].avg_ms, 3),
                        "recent_avg_ms": round(self.stages[name].recent_avg_ms, 3),
                        "min_ms": round(self.stages[name].min_ms, 3),
                        "max_ms": round(self.stages[name].max_ms, 3),
                        "count": self.stages[name].count}
                 for name in self._order}
+
+
+class _TimingStage:
+    def __init__(self, timer: PipelineTimer, name: str):
+        self._timer = timer
+        self._name = name
+
+    def __enter__(self):
+        self._t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        if self._timer.enabled:
+            ms = (time.perf_counter() - self._t0) * 1000
+            self._timer.record(self._name, ms)

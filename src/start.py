@@ -71,7 +71,7 @@ class PipelineEngine:
         if result.filtered:
             return {"cluster_id": "", "canonical": "", "raw_text": raw_text, "slot_id": 0,
                     "is_new": False, "filtered": True,
-                    "stage_times": result.stage_times, "cache_hits": result.cache_hits or []}
+                    "cache_hits": result.cache_hits or []}
 
         canonical = result.canonical_text
 
@@ -110,7 +110,7 @@ class PipelineEngine:
             return {"cluster_id": perm_slot.cluster_id, "canonical": canonical,
                     "raw_text": result.raw_text, "slot_id": perm_slot.slot_id,
                     "is_new": False, "filtered": False, "permanent": True,
-                    "stage_times": result.stage_times, "cache_hits": result.cache_hits or [],
+                    "cache_hits": result.cache_hits or [],
                     "embedding_ms": round(emb_ms, 3), "cluster_ms": round(cluster_ms, 3)}
 
         best_slot = self._find_in_dict(self.slots, emb, len(result.raw_text),
@@ -130,7 +130,7 @@ class PipelineEngine:
             return {"cluster_id": best_slot.cluster_id, "canonical": canonical,
                     "raw_text": result.raw_text, "slot_id": best_slot.slot_id,
                     "is_new": False, "filtered": False,
-                    "stage_times": result.stage_times, "cache_hits": result.cache_hits or [],
+                    "cache_hits": result.cache_hits or [],
                     "embedding_ms": round(emb_ms, 3), "cluster_ms": round(cluster_ms, 3)}
 
         sid, cid = self._new_slot(canonical, emb, result.raw_text)
@@ -143,7 +143,7 @@ class PipelineEngine:
         return {"cluster_id": cid, "canonical": canonical,
                 "raw_text": result.raw_text, "slot_id": sid,
                 "is_new": True, "filtered": False,
-                "stage_times": result.stage_times, "cache_hits": result.cache_hits or [],
+                "cache_hits": result.cache_hits or [],
                 "embedding_ms": round(emb_ms, 3), "cluster_ms": round(cluster_ms, 3)}
 
     @staticmethod

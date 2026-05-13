@@ -4,7 +4,6 @@
 管线: ① 清洗 → ② 归一化 (jieba+变体+拼音) → ③ 循环压缩 → ④ SimHash → ⑤ 去重
 """
 
-import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -28,7 +27,6 @@ class RegisterResult:
     is_new: bool = False
     layer: int = 0
     filtered: bool = False
-    stage_times: dict[str, float] | None = None
     cache_hits: list[str] | None = None
     cached_embedding: np.ndarray | None = None
 
@@ -54,105 +52,85 @@ class CanonicalRegistry:
         self.layer3_new = 0
 
     def _skip_to_dedup(self, canonical: str, raw_text: str, msg_id: str,
-                       stage_times: dict, cache_hits: list,
+                       cache_hits: list,
                        cached_emb: np.ndarray | None) -> RegisterResult:
-        t0 = time.perf_counter()
-        is_new = self.dedup_store.add(canonical, count=1, raw_text=raw_text, msg_id=msg_id)
-        # 增量维护可信集
-        if self.dedup_store.get_count(canonical) >= 3:
-            self._trusted.add(canonical)
-        stage_times["⑤_dedup"] = (time.perf_counter() - t0) * 1000
-        for name, ms in stage_times.items():
-            self.timer.record(name, ms)
+        with self.timer.stage("⑤_dedup"):
+            is_new = self.dedup_store.add(canonical, count=1, raw_text=raw_text, msg_id=msg_id)
+            if self.dedup_store.get_count(canonical) >= 3:
+                self._trusted.add(canonical)
         layer = 1 if not is_new else 3
-        if not is_new:
-            self.layer1_hits += 1
-        else:
-            self.layer3_new += 1
+        if not is_new: self.layer1_hits += 1
+        else: self.layer3_new += 1
         return RegisterResult(canonical_id=canonical, canonical_text=canonical,
                               msg_id=msg_id, raw_text=raw_text,
                               is_new=not is_new, layer=layer,
-                              stage_times=stage_times, cache_hits=cache_hits,
-                              cached_embedding=cached_emb)
+                              cache_hits=cache_hits, cached_embedding=cached_emb)
 
     def register(self, raw_text: str, msg_id: str = "") -> RegisterResult:
         self.total_ingested += 1
-        stage_times: dict[str, float] = {}
+        T = self.timer  # 上下文管理器: enabled=False 时零开销
 
         # ── ① 清洗 ──
-        t0 = time.perf_counter()
-        cleaned = basic_cleanse(raw_text, min_len=1, max_len=128)
-        stage_times["①_cleanse"] = (time.perf_counter() - t0) * 1000
+        with T.stage("①_cleanse"):
+            cleaned = basic_cleanse(raw_text, min_len=1, max_len=128)
         if cleaned is None:
-            for name, ms in stage_times.items():
-                self.timer.record(name, ms)
             return RegisterResult(msg_id=msg_id, raw_text=raw_text, filtered=True,
-                                  stage_times=stage_times, cache_hits=[])
+                                  cache_hits=[])
 
         entry = self.cache.get(cleaned)
         if entry is not None:
-            self.timer.record("①_cleanse", stage_times["①_cleanse"])
             return self._skip_to_dedup(entry.canonical, raw_text, msg_id,
-                                       stage_times, ["cleanse"], entry.embedding)
+                                       ["cleanse"], entry.embedding)
 
-        # ── ② 归一化 (alias + variant + pinyin) ──
-        t0 = time.perf_counter()
-        normalized = self.normalizer.normalize(cleaned, self._trusted)
-        stage_times["②_normalize"] = (time.perf_counter() - t0) * 1000
+        # ── ② 归一化 ──
+        with T.stage("②_normalize"):
+            normalized = self.normalizer.normalize(cleaned, self._trusted)
 
         entry = self.cache.get(normalized)
         if entry is not None:
             self.cache.put(cleaned, entry, canonical=entry.canonical)
-            for name, ms in stage_times.items():
-                self.timer.record(name, ms)
             return self._skip_to_dedup(entry.canonical, raw_text, msg_id,
-                                       stage_times, ["normalize"], entry.embedding)
+                                       ["normalize"], entry.embedding)
 
         # ── ③ 循环压缩 ──
-        t0 = time.perf_counter()
-        text = compress_cycle(normalized)
-        stage_times["③_cycle"] = (time.perf_counter() - t0) * 1000
+        with T.stage("③_cycle"):
+            text = compress_cycle(normalized)
 
         entry = self.cache.get(text)
         if entry is not None:
             self.cache.put(cleaned, entry, canonical=entry.canonical)
             self.cache.put(normalized, entry, canonical=entry.canonical)
-            for name, ms in stage_times.items():
-                self.timer.record(name, ms)
             return self._skip_to_dedup(entry.canonical, raw_text, msg_id,
-                                       stage_times, ["cycle"], entry.embedding)
+                                       ["cycle"], entry.embedding)
 
         # ── ④ SimHash ──
-        t0 = time.perf_counter()
-        self.simhash.add(text)
-        canonical_text, is_auto = self.simhash.find_canonical(text)
-        if is_auto and canonical_text:
-            text = canonical_text
-        stage_times["④_simhash"] = (time.perf_counter() - t0) * 1000
+        with T.stage("④_simhash"):
+            self.simhash.add(text)
+            canonical_text, is_auto = self.simhash.find_canonical(text)
+            if is_auto and canonical_text:
+                text = canonical_text
 
-        # ── 写入缓存 ──
+        # 写入缓存
         final = text
         for t in [cleaned, normalized, final]:
             self.cache.put(t, CacheEntry(canonical=final, embedding=None), canonical=final)
 
         # ── ⑤ 去重 ──
-        t0 = time.perf_counter()
-        is_new = self.dedup_store.add(final, count=1, raw_text=raw_text, msg_id=msg_id)
-        stage_times["⑤_dedup"] = (time.perf_counter() - t0) * 1000
-        for name, ms in stage_times.items():
-            self.timer.record(name, ms)
+        with T.stage("⑤_dedup"):
+            is_new = self.dedup_store.add(final, count=1, raw_text=raw_text, msg_id=msg_id)
+            # 增量维护可信集
+            if self.dedup_store.get_count(final) >= 3:
+                self._trusted.add(final)
 
         if not is_new:
             self.layer1_hits += 1
             return RegisterResult(canonical_id=final, canonical_text=final,
                                   msg_id=msg_id, raw_text=raw_text,
-                                  is_new=False, layer=1,
-                                  stage_times=stage_times, cache_hits=[])
+                                  is_new=False, layer=1, cache_hits=[])
         self.layer3_new += 1
         return RegisterResult(canonical_id=final, canonical_text=final,
                               msg_id=msg_id, raw_text=raw_text,
-                              is_new=True, layer=3,
-                              stage_times=stage_times, cache_hits=[])
+                              is_new=True, layer=3, cache_hits=[])
 
     def get_canonical_count(self, canonical_text: str) -> int:
         return self.dedup_store.get_count(canonical_text)
