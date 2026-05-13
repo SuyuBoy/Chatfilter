@@ -57,9 +57,9 @@ class ClusterEngine:
         self._next_perm_id = 1
 
     def find_cluster(self, emb: np.ndarray, text_len: int) -> tuple[SlotState | None, bool]:
-        """找最佳匹配簇。返回 (slot, is_permanent)。
-
-        顺序: 先热点(严格阈值) → 后常规(普通阈值)。"""
+        """找最佳匹配簇。返回 (slot, is_permanent)。"""
+        # 维度不匹配检测 (切换模型时自动清空旧 centroid)
+        self._check_dim(emb)
         conf = self.settings.cluster
         slot = self._find_in_dict(self.permanent, emb, text_len,
                                   conf.permanent_centroid_threshold,
@@ -72,6 +72,14 @@ class ClusterEngine:
                                   conf.centroid_threshold, conf.anchor_threshold,
                                   conf.split_variance_threshold)
         return slot, False
+
+    def _check_dim(self, emb: np.ndarray):
+        """检测 embedding 维度是否与已有 centroid 匹配。不匹配则清空。"""
+        for d in [self.slots, self.permanent]:
+            for s in list(d.values()):
+                if s.centroid is not None and len(s.centroid) != len(emb):
+                    d.clear()
+                    return
 
     @staticmethod
     def _find_in_dict(d: OrderedDict, emb: np.ndarray, text_len: int,
