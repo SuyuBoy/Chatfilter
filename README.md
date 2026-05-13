@@ -40,11 +40,10 @@ CSV 发送端 ──→ MiniHttpServer ──→ 预处理管线 ──→ Embed
 | 步骤 | 模块 | 说明 |
 |------|------|------|
 | ① 基础清洗 | `preprocessor.py` | 控制字符移除、全角半角统一、长度裁剪 1-128 |
-| ② 别名归一化 | `alias_normalizer.py` | 子串扫描，最长优先 (如 "灰泽满酱"→"主播") |
-| ③ 变体归一化 | `variant_normalizer.py` | 谐音字典 + pinyin 白名单 (如 "牛批"→"牛逼") |
-| ④ 循环节压缩 | `cycle_compressor.py` | 正则 `(.+?)\1{2,}` (如 "哈哈哈哈哈哈"→"哈") |
-| ⑤ SimHash 辅助 | `simhash_dedup.py` | 仅 ≥8 字符高置信度自动合并 |
-| ⑥ 精确去重 | `dedup_store.py` | 哈希表 O(1) + 原始弹幕成员保留 |
+| ② 统一归一化 | `normalizer.py` | jieba分词+相邻合并+变体字典+拼音可信验证 |
+| ③ 循环节压缩 | `cycle_compressor.py` | 正则 `(.+?)\1{2,}` (如 "哈哈哈哈哈哈"→"哈") |
+| ④ SimHash 辅助 | `simhash_dedup.py` | 仅 ≥8 字符高置信度自动合并 |
+| ⑤ 精确去重 | `dedup_store.py` | 哈希表 O(1) + 原始弹幕成员保留 |
 
 ### 在线聚类
 
