@@ -67,6 +67,23 @@ class Embedder:
         sess_options.inter_op_num_threads = 1
         self._model = ort.InferenceSession(self._onnx_path, sess_options=sess_options)
 
+    def encode_batched(self, texts: list[str]) -> np.ndarray:
+        """批量编码, 自动分批。"""
+        if isinstance(texts, str):
+            texts = [texts]
+        bs = self.settings.embedding.embed_batch_size
+        if bs <= 1 or len(texts) <= 1:
+            return self._encode_sync(texts)
+        result = []
+        for i in range(0, len(texts), bs):
+            batch = texts[i:i + bs]
+            result.append(self._encode_sync(batch))
+        return np.concatenate(result) if len(result) > 1 else result[0]
+
+    def flush_pending(self) -> np.ndarray | None:
+        """刷新待编码队列。无待处理返回 None。"""
+        return None  # 占位, 后续批次引擎实现
+
     def _encode_sync(self, texts: list[str]) -> np.ndarray:
         if self._model is None:
             raise RuntimeError("Embedder not initialized. Call initialize() first.")

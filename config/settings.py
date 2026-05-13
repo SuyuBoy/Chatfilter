@@ -30,6 +30,8 @@ class EmbeddingConfig:
     embedding_dim: int = 512                    # 向量维度
     normalize: bool = True                      # 是否 L2 归一化
     ft_model_path: str = ""                     # 微调模型路径, 空=用原始模型
+    embed_batch_size: int = 16                  # embedding 批量推理大小
+    embed_batch_timeout_ms: int = 100            # 攒批超时 (ms), 不满也发
 
 
 @dataclass

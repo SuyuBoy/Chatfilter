@@ -59,16 +59,16 @@ async def run_server(port: int):
                         batch.append(httpd.queue.get_nowait())
                     except asyncio.QueueEmpty:
                         break
-                for t in batch:
-                    ingest_result = engine.ingest(t)
-                    if not ingest_result.get("filtered"):
+                results = engine.ingest_batch(batch)
+                for t, r in zip(batch, results):
+                    if not r.get("filtered"):
                         _RECENT_BUFFER.append({
-                            "id": engine.total_ingested,
+                            "id": engine.total_ingested - len(batch) + len(_RECENT_BUFFER) + 1,
                             "raw": t,
-                            "canonical": ingest_result.get("canonical", t),
-                            "cluster_id": ingest_result.get("cluster_id", ""),
-                            "slot_id": ingest_result.get("slot_id", 0),
-                            "cache_hits": ingest_result.get("cache_hits", []),
+                            "canonical": r.get("canonical", t),
+                            "cluster_id": r.get("cluster_id", ""),
+                            "slot_id": r.get("slot_id", 0),
+                            "cache_hits": r.get("cache_hits", []),
                         })
                 import json as _json
                 state = get_state()

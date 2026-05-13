@@ -65,6 +65,98 @@ class PipelineEngine:
             await self.embedder.initialize()
             self._initialized = True
 
+    def ingest_batch(self, texts: list[str]) -> list[dict]:
+        """批量摄入: 先全部注册 → 攒批编码 → 再聚类。"""
+        # 1) 全部注册, 收集需要 embedding 的 canonical
+        results = []
+        need_emb: list[tuple[int, str]] = []  # (index, canonical)
+        for i, t in enumerate(texts):
+            r = self.registry.register(t, msg_id=str(self.total_ingested + i + 1))
+            results.append(r)
+            if not r.filtered and r.cached_embedding is None:
+                cache_entry = self.registry.cache.get(r.canonical_text)
+                if cache_entry is None or cache_entry.embedding is None:
+                    need_emb.append((i, r.canonical_text))
+
+        self.total_ingested += len(texts)
+
+        # 2) 批量编码
+        canonicals = [c for _, c in need_emb]
+        if canonicals:
+            embs = self.embedder.encode_batched(canonicals)
+            if len(canonicals) == 1:
+                embs = np.array([embs])
+            for (idx, canonical), emb in zip(need_emb, embs):
+                results[idx].cached_embedding = emb
+                self.registry.cache.backfill(canonical, emb)
+
+        # 3) 逐条聚类
+        outputs = []
+        for r in results:
+            outputs.append(self._cluster_result(r))
+        return outputs
+
+    def _cluster_result(self, result) -> dict:
+        """单独的聚类步骤 (从 ingest 拆出)。"""
+        if result.filtered:
+            return {"cluster_id": "", "canonical": "", "raw_text": result.raw_text,
+                    "slot_id": 0, "is_new": False, "filtered": True,
+                    "cache_hits": result.cache_hits or []}
+
+        canonical = result.canonical_text
+        emb = result.cached_embedding
+        if emb is None:
+            emb = self.registry.cache.get(canonical)
+            if emb is not None:
+                emb = emb.embedding
+        if emb is None:
+            emb = self.embedder._encode_sync([canonical])[0]
+            self.registry.cache.backfill(canonical, emb)
+
+        conf = self.settings.cluster
+        perm_slot = self._find_in_dict(self.permanent, emb, len(result.raw_text),
+                                       conf.permanent_centroid_threshold,
+                                       conf.permanent_anchor_threshold,
+                                       conf.permanent_split_variance_threshold)
+        if perm_slot is not None:
+            self._join_slot(perm_slot, emb, result.raw_text, canonical)
+            self.registry.cache.put(canonical,
+                                    CacheEntry(canonical=canonical, embedding=emb,
+                                               cluster_id=perm_slot.cluster_id),
+                                    canonical=canonical, cluster_id=perm_slot.cluster_id)
+            self._maintenance()
+            return {"cluster_id": perm_slot.cluster_id, "canonical": canonical,
+                    "raw_text": result.raw_text, "slot_id": perm_slot.slot_id,
+                    "is_new": False, "filtered": False, "permanent": True,
+                    "cache_hits": result.cache_hits or []}
+
+        best_slot = self._find_in_dict(self.slots, emb, len(result.raw_text),
+                                       conf.centroid_threshold, conf.anchor_threshold,
+                                       conf.split_variance_threshold)
+        if best_slot is not None and best_slot.centroid is not None:
+            self._join_slot(best_slot, emb, result.raw_text, canonical)
+            self.registry.cache.put(canonical,
+                                    CacheEntry(canonical=canonical, embedding=emb,
+                                               cluster_id=best_slot.cluster_id),
+                                    canonical=canonical, cluster_id=best_slot.cluster_id)
+            if best_slot.total_count >= conf.permanent_threshold:
+                self._promote(best_slot)
+            self._maintenance()
+            return {"cluster_id": best_slot.cluster_id, "canonical": canonical,
+                    "raw_text": result.raw_text, "slot_id": best_slot.slot_id,
+                    "is_new": False, "filtered": False,
+                    "cache_hits": result.cache_hits or []}
+
+        sid, cid = self._new_slot(canonical, emb, result.raw_text)
+        self.registry.cache.put(canonical,
+                                CacheEntry(canonical=canonical, embedding=emb, cluster_id=cid),
+                                canonical=canonical, cluster_id=cid)
+        self._maintenance()
+        return {"cluster_id": cid, "canonical": canonical,
+                "raw_text": result.raw_text, "slot_id": sid,
+                "is_new": True, "filtered": False,
+                "cache_hits": result.cache_hits or []}
+
     def ingest(self, raw_text: str, msg_id: str = "") -> dict:
         self.total_ingested += 1
         result = self.registry.register(raw_text, msg_id=msg_id or str(self.total_ingested))
