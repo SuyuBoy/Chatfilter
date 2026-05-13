@@ -7,6 +7,9 @@
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+
+# 下载 BGE 模型 (只需一次)
+bash scripts/setup_models.sh
 ```
 
 ### 启动命令

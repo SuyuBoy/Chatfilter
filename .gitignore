@@ -15,5 +15,9 @@ pipeline_output/
 .vscode/
 .claude/
 
-# 模型文件 (太大, 自行下载)
-models/
+# 模型文件 (只忽略大文件, 保留配置和说明)
+models/**/*.safetensors
+models/**/*.bin
+models/**/tokenizer.json
+models/**/vocab.txt
+models/**/.git/
