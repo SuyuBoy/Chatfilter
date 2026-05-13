@@ -22,9 +22,8 @@ models/**/tokenizer.json
 models/**/vocab.txt
 models/**/.git/
 
-# ONNX 导出 + Cython 编译产物
-models/*-onnx/
-*.onnx
+# ONNX 导出 + Cython 编译产物 (仅 Python 端)
+/models/*-onnx/
 *.onnx.data
 *.c
 *.so

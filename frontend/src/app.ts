@@ -1,9 +1,26 @@
 /**
  * 弹幕语义聚类 — 纯前端版 (transformers.js + WASM)
- * 预处理 → embedding → 聚类 → UI
+ * 预处理 → embedding → 聚类
  */
+import { pipeline, env, type FeatureExtractionPipeline } from '@xenova/transformers';
 
-import { pipeline, type FeatureExtractionPipeline } from '@xenova/transformers';
+// WASM backend path
+env.backends.onnx.wasm.wasmPaths = (import.meta as any).env?.DEV
+  ? '/node_modules/onnxruntime-web/dist/'
+  : './assets/';
+
+// Load model from local files (not HuggingFace)
+const DEV = (import.meta as any).env?.DEV;
+env.allowLocalModels = true;
+if (DEV) {
+  // In dev, model files are in public/models/
+  env.remoteHost = window.location.origin;
+  env.remotePathTemplate = 'models/{model}/';
+} else {
+  // In production, model files are alongside the page
+  env.remoteHost = window.location.origin;
+  env.remotePathTemplate = 'models/{model}/';
+}
 
 // ═══════════════════════════════════════════════
 //  1. 预处理 (preprocess)
@@ -114,9 +131,9 @@ export class DedupStore {
 // ═══════════════════════════════════════════════
 
 const MODEL_REPO = 'Xenova/bge-small-zh-v1.5';
-const REQUIRED_FILES = ['tokenizer.json','tokenizer_config.json','onnx/model.onnx','config.json'];
+const REQUIRED_FILES = ['tokenizer.json','tokenizer_config.json','onnx/model_quantized.onnx','config.json'];
 
-let extractor: FeatureExtractionPipeline | null = null;
+let extractor: any = null;
 let modelLoaded = false;
 
 export function getModelRepo() { return MODEL_REPO; }
@@ -125,11 +142,12 @@ export function isModelReady() { return modelLoaded; }
 
 export async function initAuto(onProgress?: (m: string) => void): Promise<void> {
   if (modelLoaded) return;
-  onProgress?.('Downloading from HuggingFace...');
+  onProgress?.('Loading model from local files...');
   extractor = await pipeline('feature-extraction', MODEL_REPO, {
+    local_files_only: true,
+    quantized: true,
     progress_callback: (info: any) => {
-      if (info.status === 'download' && info.file) onProgress?.(`Downloading ${info.file}...`);
-      else if (info.status === 'progress') onProgress?.('Loading weights...');
+      if (info.status === 'progress') onProgress?.(`Loading ${info.file || 'weights'}...`);
     },
   });
   modelLoaded = true; onProgress?.('Model ready.');
@@ -154,7 +172,7 @@ export async function initFromFiles(files: File[], onProgress?: (m: string) => v
   };
   try {
     onProgress?.('Initializing pipeline...');
-    extractor = await pipeline('feature-extraction', MODEL_REPO, { local_files_only: true });
+    extractor = await pipeline('feature-extraction', MODEL_REPO, { local_files_only: true, quantized: true });
     modelLoaded = true; onProgress?.('Model loaded from local files!');
   } finally {
     globalThis.fetch = orig;
@@ -453,152 +471,3 @@ export class PipelineEngine {
 }
 
 
-// ═══════════════════════════════════════════════
-//  5. UI + Entry (main)
-// ═══════════════════════════════════════════════
-
-const engine = new PipelineEngine();
-let modelReady = false;
-
-// ── Setup Modal ──
-function showModal() { document.getElementById('setup_overlay')!.style.display = 'flex'; }
-function hideModal() { document.getElementById('setup_overlay')!.style.display = 'none'; }
-function setStatus(m: string, err = false) {
-  const el = document.getElementById('setup_status')!; el.textContent = m; el.style.color = err ? 'var(--red)' : 'var(--muted)';
-}
-function setProgress(m: string) {
-  const el = document.getElementById('setup_progress')!; el.style.display = m ? 'block' : 'none'; el.textContent = m;
-}
-function setChecklist(files: string[], ok: string[] = []) {
-  document.getElementById('file_checklist')!.innerHTML = files.map(f => {
-    const found = ok.some(o => o.endsWith(f));
-    return `<div style="font-size:11px;padding:2px 0">${found ? '✅' : '❌'} ${f}</div>`;
-  }).join('');
-}
-
-document.getElementById('btn_auto')!.onclick = async () => {
-  (document.getElementById('btn_auto') as HTMLButtonElement).disabled = true;
-  (document.getElementById('btn_manual') as HTMLButtonElement).disabled = true;
-  setStatus('Connecting...'); setProgress('');
-  try {
-    await initAuto(m => setProgress(m));
-    modelReady = true; setStatus('Model ready!'); setTimeout(hideModal, 1000); updateState();
-  } catch (e: any) {
-    setStatus(`Failed: ${e.message}`, true);
-    setProgress(`Tip: use manual mode — download from https://huggingface.co/${getModelRepo()}`);
-    (document.getElementById('btn_auto') as HTMLButtonElement).disabled = false;
-    (document.getElementById('btn_manual') as HTMLButtonElement).disabled = false;
-  }
-};
-
-document.getElementById('btn_manual')!.onclick = () => {
-  document.getElementById('file_checklist_area')!.style.display = 'block';
-  setChecklist(getRequiredFiles());
-  (document.getElementById('dir_picker') as HTMLInputElement).click();
-};
-
-document.getElementById('dir_picker')!.onchange = async () => {
-  const fs = Array.from((document.getElementById('dir_picker') as HTMLInputElement).files || []);
-  if (!fs.length) return;
-  setChecklist(getRequiredFiles(), fs.map(f => (f as any).webkitRelativePath || f.name));
-  setStatus(`Found ${fs.length} files. Validating...`);
-  setProgress('Reading files...');
-  (document.getElementById('btn_auto') as HTMLButtonElement).disabled = true;
-  (document.getElementById('btn_manual') as HTMLButtonElement).disabled = true;
-  try {
-    await initFromFiles(fs, m => setProgress(m));
-    modelReady = true; setStatus('Model loaded!'); setTimeout(hideModal, 1000); updateState();
-  } catch (e: any) {
-    setStatus(e.message, true); setProgress('');
-    (document.getElementById('btn_auto') as HTMLButtonElement).disabled = false;
-    (document.getElementById('btn_manual') as HTMLButtonElement).disabled = false;
-  }
-};
-
-showModal();
-
-// ── UI State ──
-let recentLog: { id:number; raw:string; canonical:string; clusterId:string; slotId:number }[] = [];
-let logSeq = 0, maxSlots = 40;
-
-async function processIngest(text: string) {
-  const r = await engine.ingest(text);
-  if (!r.filtered) {
-    recentLog.unshift({ id:++logSeq, raw:r.rawText, canonical:r.canonical, clusterId:r.clusterId, slotId:r.slotId });
-    if (recentLog.length > 200) recentLog.pop();
-  }
-  updateState();
-}
-function queueIngest(text: string) { if (modelReady) processIngest(text); }
-
-let lastRawIds = new Set<string>(), rawSeq = 0, lastPreIds = new Set<string>(), lastCluIds = new Set<number>();
-
-function updateState() {
-  const s = engine.getState(); maxSlots = s.maxSlots;
-  document.getElementById('st_ingested')!.textContent = String(s.ingested);
-  document.getElementById('st_unique')!.textContent = String(s.unique);
-  document.getElementById('st_clusters')!.textContent = String(s.clusters.length);
-  document.getElementById('st_slots')!.textContent = String(s.maxSlots);
-  document.getElementById('st_ct')!.textContent = s.centroid.toFixed(2);
-  document.getElementById('st_at')!.textContent = s.anchor.toFixed(2);
-  document.getElementById('st_cache')!.textContent = (s.cacheHitRate * 100).toFixed(1) + '%';
-  document.getElementById('cnt_raw')!.textContent = String(recentLog.length); renderRaw();
-  document.getElementById('cnt_pre')!.textContent = String(recentLog.length); renderPre();
-  document.getElementById('cnt_clu')!.textContent = String(s.clusters.length); renderPerm(s.permanent); renderClusters(s.clusters);
-  if (modelReady) document.getElementById('model_status')!.textContent = 'Ready';
-}
-
-function e(s: string): string { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function hc(ratio: number): string {
-  const lr = ratio > 0 ? Math.log(1 + ratio * 9) / Math.log(10) : 0;
-  return `rgba(${Math.round(9 + lr * 241)},${Math.round(105 - lr * 12)},${Math.round(218 - lr * 100)},0.22)`;
-}
-
-function renderRaw() {
-  const el = document.getElementById('raw_list')!, cur = new Set<string>();
-  for (const item of recentLog) { const id = String(item.id); cur.add(id);
-    if (!lastRawIds.has(id)) { const d = document.createElement('div'); d.className = 'entry'; d.innerHTML = `<span class="idx">${++rawSeq}</span><span class="txt">${e(item.raw)}</span>`; el.prepend(d); }
-  }
-  lastRawIds = cur; while (el.children.length > 200) el.lastChild!.remove(); el.scrollTop = 0;
-}
-function renderPre() {
-  const el = document.getElementById('pre_list')!, cur = new Set<string>();
-  for (const item of recentLog) { const id = String(item.id); cur.add(id);
-    if (!lastPreIds.has(id)) { const ch = item.raw !== item.canonical; const d = document.createElement('div'); d.className = 'entry' + (ch ? ' new' : ''); d.innerHTML = `<span class="idx">&#8203;</span><span class="txt">${e(item.canonical)}${ch ? '<span class="tag">归一化</span>' : ''}</span>`; el.prepend(d); }
-  }
-  lastPreIds = cur; while (el.children.length > 200) el.lastChild!.remove(); el.scrollTop = 0;
-}
-function renderPerm(perms: any[]) {
-  const bar = document.getElementById('perm_bar')!;
-  if (!perms.length) { bar.style.display = 'none'; return; }
-  bar.style.display = 'flex'; const maxC = Math.max(...perms.map((p: any) => p.totalCount || 0), 1);
-  let h = '<span style="color:var(--purple);font-weight:600;flex-shrink:0;">🏛️ 热点</span>';
-  for (const p of perms) { const r = (p.totalCount || 0) / maxC, bg = hc(r); h += `<span style="background:${bg};color:var(--purple);padding:1px 6px;border-radius:3px;margin:0 2px;font-size:11px;white-space:nowrap;flex-shrink:0;">${e((p.canonicalText || '').slice(0, 8))} <b>${p.totalCount || 0}</b></span>`; }
-  h += `<span style="font-size:10px;color:var(--muted);flex-shrink:0;">${perms.length}个</span>`; bar.innerHTML = h;
-}
-function renderClusters(clusters: any[]) {
-  const grid = document.getElementById('clu_grid')!, cur = new Set<number>(), map: Record<number, any> = {};
-  let maxC = 1; for (const c of clusters) { map[c.slotId] = c; cur.add(c.slotId); if (c.totalCount > maxC) maxC = c.totalCount; }
-  for (let sid = 1; sid <= maxSlots; sid++) {
-    const c = map[sid]; let card = grid.querySelector(`[data-sid="${sid}"]`) as HTMLElement;
-    if (!card) { card = document.createElement('div'); card.className = 'cluster-card'; card.dataset.sid = String(sid); grid.appendChild(card); }
-    if (c) { const raw = c.latestRaw || (c.topExamples || [])[0] || ''; const r = (c.totalCount || 0) / maxC, bg = hc(r);
-      card.innerHTML = `<div class="head"><span class="canonical">[${String(c.slotId).padStart(2, '0')}] ${e(c.canonicalText)}</span><span class="cnt">${c.totalCount || 0}次</span></div>${raw ? `<div class="members" style="margin-top:2px;"><span class="member">${e(raw.slice(0, 20))}</span></div>` : ''}`;
-      card.style.background = bg; card.style.opacity = '1'; }
-    else { card.innerHTML = `<div class="head"><span style="color:var(--muted)">[${String(sid).padStart(2, '0')}] —</span></div>`; card.style.opacity = '0.4'; }
-  }
-  for (const ch of [...grid.children]) { const s = parseInt((ch as HTMLElement).dataset.sid || '0'); if (s > maxSlots) ch.remove(); }
-  lastCluIds = cur;
-}
-
-document.getElementById('manual_send')!.onclick = () => { const i = document.getElementById('manual_input') as HTMLInputElement; const t = i.value.trim(); if (t) { queueIngest(t); i.value = ''; i.focus(); } };
-document.getElementById('manual_input')!.onkeydown = (e) => { if ((e as KeyboardEvent).key === 'Enter') { const i = document.getElementById('manual_input') as HTMLInputElement; const t = i.value.trim(); if (t) { queueIngest(t); i.value = ''; } } };
-document.getElementById('apply_threshold')!.onclick = () => { engine.cluster.config.centroidThreshold = parseFloat((document.getElementById('in_ct') as HTMLInputElement).value) || 0.4; engine.cluster.config.anchorThreshold = parseFloat((document.getElementById('in_at') as HTMLInputElement).value) || 0.6; updateState(); };
-document.getElementById('card_width')!.oninput = (e) => { const w = (e.target as HTMLInputElement).value; document.getElementById('card_width_val')!.textContent = w + 'px'; document.getElementById('clu_grid')!.style.gridTemplateColumns = `repeat(auto-fill,minmax(${w}px,1fr))`; };
-document.getElementById('file_input')!.onchange = async (e) => {
-  const f = (e.target as HTMLInputElement).files?.[0]; if (!f) return;
-  const t = await f.text(), lines = t.split(/[\n\r]+/).filter(l => l.trim()), st = document.getElementById('bulk_status')!;
-  st.textContent = `Processing ${lines.length} messages...`; let i = 0; const bs = 10;
-  async function nb() { const b = lines.slice(i, i + bs); if (!b.length) { st.textContent = `Done: ${lines.length} msgs.`; return; } await engine.ingestBatch(b.map(l => l.trim())); i += bs; updateState(); st.textContent = `Processed ${Math.min(i, lines.length)}/${lines.length}...`; requestAnimationFrame(() => nb()); }
-  nb();
-};
