@@ -22,7 +22,7 @@ class PreprocessConfig:
 @dataclass
 class EmbeddingConfig:
     """向量化 — BGE-small-zh 512维"""
-    model_name: str = ""                        # 空=自动检测本地模型, 否则 HF 名称
+    model_name: str = "models/bge-base-zh-v1.5"                        # 空=自动检测本地模型, 否则 HF 名称
     onnx_path: str = ""                         # ONNX 模型导出路径 (空=用 SentenceTransformer)
     onnx_threads: int = 2                       # ONNX 推理线程数
     cache_ttl: float = 600.0                    # 缓存过期时间 (秒), 默认 10 分钟

@@ -117,7 +117,7 @@ class Embedder:
         """加载 SentenceTransformer 模型。"""
         try:
             from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self._model_name)
+            self._model = SentenceTransformer(self._model_name, device="cpu")
             self._dim = self._model.get_embedding_dimension()
         except ImportError:
             raise ImportError(
