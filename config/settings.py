@@ -21,13 +21,13 @@ class PreprocessConfig:
 
 @dataclass
 class EmbeddingConfig:
-    """向量化 — BGE-small-zh 512维"""
+    """向量化 — 模型加载后自动检测维度"""
     model_name: str = "models/bge-base-zh-v1.5"                        # 空=自动检测本地模型, 否则 HF 名称
     onnx_path: str = ""                         # ONNX 模型导出路径 (空=用 SentenceTransformer)
     onnx_threads: int = 2                       # ONNX 推理线程数
     cache_ttl: float = 600.0                    # 缓存过期时间 (秒), 默认 10 分钟
     cache_max_size: int = 50000                 # 统一缓存池最大条目数
-    embedding_dim: int = 512                    # 向量维度
+    embedding_dim: int = 0                      # 向量维度 (0=加载模型后自动检测)
     normalize: bool = True                      # 是否 L2 归一化
     ft_model_path: str = ""                     # 微调模型路径, 空=用原始模型
     embed_batch_size: int = 16                  # embedding 批量推理大小

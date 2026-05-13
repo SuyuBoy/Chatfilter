@@ -59,6 +59,7 @@ class Embedder:
         from sentence_transformers import SentenceTransformer
         self._model = SentenceTransformer(self._model_name, device="cpu")
         self._dim = self._model.get_embedding_dimension()
+        self.settings.embedding.embedding_dim = self._dim  # 同步到配置
 
     async def _init_onnx(self) -> None:
         import onnxruntime as ort  # type: ignore[import-untyped]
