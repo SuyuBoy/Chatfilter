@@ -25,7 +25,9 @@ except ImportError:
 @lru_cache(maxsize=2048)
 def _cached_pinyin(text: str) -> str:
     """带声调拼音, 缓存 2048 条。"""
-    return "".join([item[0] for item in pinyin(text, style=Style.TONE3)])
+    if pinyin is None:
+        return ""
+    return "".join([item[0] for item in pinyin(text, style=Style.TONE3)])  # type: ignore[arg-type]
 
 
 class Normalizer:

@@ -45,6 +45,7 @@ class CanonicalRegistry:
             min_text_length=settings.preprocess.simhash_min_text_length,
         )
         self.dedup_store = DedupStore()
+        self._trusted: set[str] = set()  # 增量维护, count≥3 的 canonical
         emb_cfg = settings.embedding
         self.cache = UnifiedCache(max_size=emb_cfg.cache_max_size, ttl=emb_cfg.cache_ttl)
         self.timer = PipelineTimer()
@@ -52,15 +53,14 @@ class CanonicalRegistry:
         self.layer1_hits = 0
         self.layer3_new = 0
 
-    def _trusted_canonicals(self) -> set[str]:
-        """返回当前可信 canonical 集合 (dedup 中出现 ≥3 次)。"""
-        return {c for c in self.dedup_store if self.dedup_store.get_count(c) >= 3}
-
     def _skip_to_dedup(self, canonical: str, raw_text: str, msg_id: str,
                        stage_times: dict, cache_hits: list,
                        cached_emb: np.ndarray | None) -> RegisterResult:
         t0 = time.perf_counter()
         is_new = self.dedup_store.add(canonical, count=1, raw_text=raw_text, msg_id=msg_id)
+        # 增量维护可信集
+        if self.dedup_store.get_count(canonical) >= 3:
+            self._trusted.add(canonical)
         stage_times["⑤_dedup"] = (time.perf_counter() - t0) * 1000
         for name, ms in stage_times.items():
             self.timer.record(name, ms)
@@ -97,8 +97,7 @@ class CanonicalRegistry:
 
         # ── ② 归一化 (alias + variant + pinyin) ──
         t0 = time.perf_counter()
-        trusted = self._trusted_canonicals()
-        normalized = self.normalizer.normalize(cleaned, trusted)
+        normalized = self.normalizer.normalize(cleaned, self._trusted)
         stage_times["②_normalize"] = (time.perf_counter() - t0) * 1000
 
         entry = self.cache.get(normalized)
