@@ -22,9 +22,10 @@ from pathlib import Path
 
 from config.settings import Settings
 
-# 项目根目录 + 本地模型路径
+# 项目根目录 + 本地模型路径 (优先级: base > small > HF)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent
-_LOCAL_MODEL = _PROJECT_ROOT / "models" / "bge-small-zh-v1.5"
+_LOCAL_BASE = _PROJECT_ROOT / "models" / "bge-base-zh-v1.5"
+_LOCAL_SMALL = _PROJECT_ROOT / "models" / "bge-small-zh-v1.5"
 
 # 文本哈希: 优先 xxhash, 回退 md5
 try:
@@ -88,12 +89,14 @@ class Embedder:
             ft_path = _PROJECT_ROOT / emb_cfg.ft_model_path
             if ft_path.exists():
                 self._model_name = str(ft_path.resolve())
-        # 回退: 配置指定 → 本地 → HF
+        # 回退: 配置指定 → 本地 base → 本地 small → HF
         if not self._model_name:
             if emb_cfg.model_name:
                 self._model_name = emb_cfg.model_name
-            elif _LOCAL_MODEL.exists():
-                self._model_name = str(_LOCAL_MODEL.resolve())
+            elif _LOCAL_BASE.exists():
+                self._model_name = str(_LOCAL_BASE.resolve())
+            elif _LOCAL_SMALL.exists():
+                self._model_name = str(_LOCAL_SMALL.resolve())
             else:
                 self._model_name = "BAAI/bge-small-zh-v1.5"
 
