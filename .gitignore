@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# 临时输出
+preprocess_output/
+pipeline_output/
+
+# IDE / 工具
+.vscode/
+.claude/
+
+# 模型文件 (太大, 自行下载)
+models/

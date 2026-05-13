@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>弹幕语义聚类 — 实时监控</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --card: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --muted: #656d76;
+    --accent: #0969da;
+    --green: #1a7f37;
+    --orange: #bf8700;
+    --red: #cf222e;
+    --purple: #8250df;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:var(--bg); color:var(--text);
+    font-family:'Segoe UI',system-ui,sans-serif;
+    height:100vh; display:flex; flex-direction:column;
+    overflow:hidden;           /* ← 防止 body 出现滚动条撑开布局 */
+  }
+
+  /* 顶栏 */
+  .topbar {
+    display:flex; align-items:center; gap:24px; padding:10px 16px;
+    background:var(--card); border-bottom:1px solid var(--border);
+    flex-shrink:0;
+  }
+  .topbar h1 { font-size:18px; color:var(--accent); white-space:nowrap; }
+  .stat { display:flex; align-items:baseline; gap:6px; font-size:13px; }
+  .stat .val { font-size:20px; font-weight:700; color:var(--accent); }
+  .stat .label { color:var(--muted); }
+  .sep { color:var(--border); }
+
+  /* 主体三列 —— 关键修复区 */
+  .main {
+    display:grid;
+    grid-template-columns:1fr 1fr 3fr;  /* 保持比例 */
+    grid-template-rows:1fr;
+    gap:1px;
+    background:var(--border);
+    flex:1;
+    overflow:hidden;
+    width:100%;        /* ← 修复：明确撑满父宽 */
+    min-height:0;      /* ← 修复：flex 子项高度约束 */
+  }
+
+  .col {
+    background:var(--bg);
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;   /* ← 修复：防止内容撑开列宽 */
+    min-width:0;
+  }
+  .col-header {
+    padding:8px 12px; font-size:13px; font-weight:600;
+    background:var(--card); border-bottom:1px solid var(--border);
+    flex-shrink:0; display:flex; justify-content:space-between; align-items:center;
+  }
+  .col-header .count { font-size:11px; color:var(--muted); font-weight:400; }
+  .col-body {
+    flex:1; overflow-y:auto; padding:4px 0;
+    min-height:0;      /* ← 修复：保证 flex 子项可滚动 */
+  }
+
+  /* 弹幕条目 */
+  .entry {
+    padding:5px 12px; font-size:12px; border-bottom:1px solid rgba(48,54,61,0.5);
+    display:flex; gap:6px; align-items:flex-start;
+  }
+  .entry .idx { color:var(--muted); font-size:10px; min-width:24px; text-align:right; flex-shrink:0; }
+  .entry .txt { word-break:break-all; flex:1; }
+  .entry .tag {
+    font-size:10px; padding:0 5px; border-radius:3px; flex-shrink:0;
+    background:rgba(88,166,255,0.15); color:var(--accent);
+  }
+  .entry.new .tag { background:rgba(63,185,80,0.15); color:var(--green); }
+
+  /* 簇卡片 */
+  .cluster-card {
+    margin:2px; padding:6px 8px; background:var(--card);
+    border:1px solid var(--border); border-radius:6px; font-size:13px;
+    display:flex; flex-direction:column; overflow:hidden;
+    min-height:0;
+  }
+  .cluster-card .head { display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
+  .cluster-card .canonical {
+    font-weight:700; color:var(--accent);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    font-size:14px;
+  }
+  .cluster-card .cnt { font-size:11px; color:var(--green); flex-shrink:0; margin-left:4px; }
+  .cluster-card .members { color:var(--muted); font-size:11px; line-height:1.4; overflow:hidden; flex:1; min-height:0; }
+  .cluster-card .member {
+    display:inline-block; background:rgba(163,113,247,0.12); color:var(--purple);
+    padding:0 4px; border-radius:3px; margin:1px 2px 1px 0;
+  }
+
+  /* 控制栏 */
+  .ctrlbar {
+    display:flex; align-items:center; gap:20px; padding:6px 16px;
+    background:var(--card); border-bottom:1px solid var(--border);
+    flex-shrink:0; font-size:12px;
+  }
+  .ctrlbar label { color:var(--muted); white-space:nowrap; }
+  .ctrlbar input[type=range] { width:120px; accent-color:var(--accent); }
+  .ctrlbar .val { color:var(--accent); font-weight:600; min-width:32px; }
+  .ctrlbar input[type=text] {
+    flex:1; max-width:260px; padding:4px 8px; font-size:12px;
+    border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text);
+    outline:none;
+  }
+  .ctrlbar input[type=text]:focus { border-color:var(--accent); }
+  .ctrlbar button {
+    padding:4px 12px; font-size:12px; background:var(--accent); color:#fff;
+    border:none; border-radius:4px; cursor:pointer;
+  }
+  .ctrlbar button:hover { opacity:0.85; }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width:5px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🎯 弹幕语义聚类</h1>
+  <span class="sep">|</span>
+  <div class="stat"><span class="val" id="st_ingested">0</span><span class="label">摄入</span></div>
+  <div class="stat"><span class="val" id="st_unique">0</span><span class="label">唯一</span></div>
+  <div class="stat"><span class="val" id="st_clusters">0</span><span class="label">聚类</span></div>
+  <div class="stat"><span class="val" id="st_slots">20</span><span class="label">槽位</span></div>
+  <span class="sep">|</span>
+  <div class="stat"><span class="label">簇心阈值</span><span class="val" style="font-size:14px" id="st_ct">0.20</span></div>
+  <div class="stat"><span class="label">锚点阈值</span><span class="val" style="font-size:14px" id="st_at">0.80</span></div>
+  <span class="sep">|</span>
+  <div class="stat"><span class="label">统一缓存</span><span class="val" style="font-size:14px" id="st_cache">—</span></div>
+  <span class="sep">|</span>
+  <div class="stat"><span class="label">emb耗时</span><span class="val" style="font-size:14px" id="st_emb_ms">—</span></div>
+  <div class="stat"><span class="label">聚类耗时</span><span class="val" style="font-size:14px" id="st_clu_ms">—</span></div>
+</div>
+
+<div class="ctrlbar" id="timing_bar" style="font-size:11px;color:var(--muted);gap:10px;overflow-x:auto;"></div>
+
+<div class="ctrlbar">
+  <span style="color:var(--muted)">⚙ 聚类粒度</span>
+  <label>簇心</label>
+  <input type="text" id="in_ct" value="0.20" style="width:55px;padding:2px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
+  <label>锚点</label>
+  <input type="text" id="in_at" value="0.80" style="width:55px;padding:2px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
+  <button id="apply_threshold" style="padding:4px 12px;font-size:12px;">应用</button>
+  <span style="color:var(--muted)">|</span>
+  <label>卡片宽</label>
+  <input type="range" id="card_width" min="160" max="500" value="280" style="width:80px;">
+  <span class="val" id="card_width_val" style="font-size:11px;">280px</span>
+  <span style="flex:1"></span>
+  <input type="text" id="manual_input" placeholder="手写弹幕，回车发送…" maxlength="128">
+  <button id="manual_send">发送</button>
+</div>
+
+<div class="ctrlbar" id="perm_bar" style="font-size:11px;gap:6px;min-height:28px;display:none;overflow-x:auto;overflow-y:hidden;white-space:nowrap;flex-wrap:nowrap;">
+  <span style="color:var(--purple);font-weight:600;flex-shrink:0;">🏛️ 10min热点</span>
+</div>
+
+<div class="main" id="main_grid">
+  <div class="col" id="col_raw">
+    <div class="col-header">📥 原始弹幕 <span class="count" id="cnt_raw">0</span></div>
+    <div class="col-body" id="raw_list"></div>
+  </div>
+
+  <div class="col" id="col_pre">
+    <div class="col-header">🔄 预处理后 <span class="count" id="cnt_pre">0</span></div>
+    <div class="col-body" id="pre_list"></div>
+  </div>
+
+  <div class="col" id="col_clu">
+    <div class="col-header">🧠 语义聚类 <span class="count" id="cnt_clu">0</span></div>
+    <!-- ↓ minmax 下限改为 200px，防止单卡撑破父列 -->
+    <div class="col-body" id="clu_grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px;grid-auto-rows:minmax(52px,auto);align-content:start;"></div>
+  </div>
+</div>
+
+<script>
+let seq = 0;
+let maxSlots = 20;
+
+document.getElementById('manual_send').addEventListener('click', sendManual);
+document.getElementById('manual_input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') sendManual();
+});
+function sendManual() {
+  const inp = document.getElementById('manual_input');
+  const text = inp.value.trim();
+  if (!text) return;
+  fetch(`/ingest?text=${encodeURIComponent(text)}`, {method:'POST'}).catch(()=>{});
+  inp.value = '';
+  inp.focus();
+}
+
+function applyThreshold() {
+  const ct = parseFloat(document.getElementById('in_ct').value) || 0.20;
+  const at = parseFloat(document.getElementById('in_at').value) || 0.80;
+  fetch(`/admin/threshold?centroid=${ct}&anchor=${at}`, {method:'POST'}).catch(()=>{});
+}
+document.getElementById('apply_threshold').addEventListener('click', applyThreshold);
+['in_ct','in_at'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') applyThreshold();
+  });
+});
+
+function applyState(s) {
+  maxSlots = s.max_slots || 20;
+  document.getElementById('st_ingested').textContent = s.ingested || 0;
+  document.getElementById('st_unique').textContent = s.unique || 0;
+  document.getElementById('st_clusters').textContent = (s.clusters || []).length;
+  document.getElementById('st_slots').textContent = maxSlots;
+  document.getElementById('st_ct').textContent = (s.centroid || 0.78).toFixed(2);
+  document.getElementById('st_at').textContent = (s.anchor || 0.82).toFixed(2);
+  const hr = s.cache_hit_rate;
+  document.getElementById('st_cache').textContent = hr != null ? (hr * 100).toFixed(1) + '%' : '—';
+  document.getElementById('st_emb_ms').textContent = (s.embedding_avg_ms != null) ? s.embedding_avg_ms.toFixed(1) + 'ms' : '—';
+  document.getElementById('st_clu_ms').textContent = (s.cluster_avg_ms != null) ? s.cluster_avg_ms.toFixed(1) + 'ms' : '—';
+  const timing = s.stage_timing || {};
+  const bar = document.getElementById('timing_bar');
+  bar.innerHTML = Object.entries(timing).map(([k, v]) => {
+    const short = k.includes('_') ? k.split('_', 1)[1] || k : k;
+    return `<span>${short} <b style="color:var(--accent)">${v.recent_avg_ms != null ? v.recent_avg_ms.toFixed(2) : '—'}ms</b></span>`;
+  }).join(' <span style="color:var(--border)">|</span> ');
+  const ctFocused = document.getElementById('in_ct') === document.activeElement;
+  const atFocused = document.getElementById('in_at') === document.activeElement;
+  if (!ctFocused) document.getElementById('in_ct').value = (s.centroid ?? 0.20).toFixed(2);
+  if (!atFocused) document.getElementById('in_at').value = (s.anchor ?? 0.80).toFixed(2);
+
+  const rawLog = s.raw_log || [];
+  document.getElementById('cnt_raw').textContent = rawLog.length;
+  renderRaw(rawLog);
+  document.getElementById('cnt_pre').textContent = rawLog.length;
+  renderPre(rawLog);
+  document.getElementById('cnt_clu').textContent = (s.clusters || []).length;
+  renderPermanent(s.permanent || []);
+  renderClusters(s.clusters || []);
+}
+
+let lastRawIds = new Set();
+const CACHE_STAGE_CN = {cleanse:'清洗', alias:'同义词替换', variant:'变体归一', cycle:'循环节压缩'};
+
+function renderRaw(log) {
+  const el = document.getElementById('raw_list');
+  const currentIds = new Set();
+  for (const item of log) {
+    const id = item.id != null ? String(item.id) : (item.raw + '|' + (item.cluster_id || ''));
+    currentIds.add(id);
+    if (!lastRawIds.has(id)) {
+      const div = document.createElement('div');
+      div.className = 'entry';
+      const hits = (item.cache_hits || []).map(s => CACHE_STAGE_CN[s] || s);
+      const tags = hits.map(h => `<span class="tag" style="background:rgba(9,105,218,0.12);color:var(--accent)">${h}</span>`).join('');
+      div.innerHTML = `<span class="idx">${++seq}</span><span class="txt">${esc(item.raw)}${tags}</span>`;
+      el.prepend(div);
+    }
+  }
+  lastRawIds = currentIds;
+  while (el.children.length > 200) el.lastChild.remove();
+  el.scrollTop = 0;
+}
+
+let lastPreIds = new Set();
+function renderPre(log) {
+  const el = document.getElementById('pre_list');
+  const currentIds = new Set();
+  for (const item of log) {
+    const changed = item.raw !== item.canonical;
+    const id = item.id != null ? String(item.id) : (item.raw + '|' + item.canonical);
+    currentIds.add(id);
+    if (!lastPreIds.has(id)) {
+      const div = document.createElement('div');
+      div.className = 'entry' + (changed ? ' new' : '');
+      const changedTag = changed ? `<span class="tag">归一化</span>` : '';
+      const hits = (item.cache_hits || []).map(s => CACHE_STAGE_CN[s] || s);
+      const hitTags = hits.map(h => `<span class="tag" style="background:rgba(9,105,218,0.12);color:var(--accent)">${h}</span>`).join('');
+      div.innerHTML = `<span class="idx">&#8203;</span><span class="txt">${esc(item.canonical)}${changedTag}${hitTags}</span>`;
+      el.prepend(div);
+    }
+  }
+  lastPreIds = currentIds;
+  while (el.children.length > 200) el.lastChild.remove();
+  el.scrollTop = 0;
+}
+
+// 蓝→红 渐变色 (对数尺度, 低频也有区分度)
+function heatColor(ratio) {
+  const logR = ratio > 0 ? Math.log(1 + ratio * 9) / Math.log(10) : 0;
+  const r = Math.round(9 + logR * 241);     // 9 → 250
+  const g = Math.round(105 - logR * 12);    // 105 → 93
+  const b = Math.round(218 - logR * 100);   // 218 → 118
+  return `rgba(${r},${g},${b},0.22)`;
+}
+
+function renderPermanent(perms) {
+  const bar = document.getElementById('perm_bar');
+  if (!perms || !perms.length) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  const maxC = Math.max(...perms.map(p => p.total_count || 0), 1);
+  let html = '<span style="color:var(--purple);font-weight:600;flex-shrink:0;">🏛️ 10min热点</span>';
+  for (const p of perms) {
+    const ratio = (p.total_count || 0) / maxC;
+    const bg = heatColor(ratio);
+    html += `<span style="background:${bg};color:var(--purple);padding:1px 6px;border-radius:3px;margin:0 2px;font-size:11px;white-space:nowrap;flex-shrink:0;">${esc(p.canonical_text.slice(0,8))} <b>${p.total_count||0}</b></span>`;
+  }
+  html += `<span style="font-size:10px;color:var(--muted);flex-shrink:0;">${perms.length}个</span>`;
+  bar.innerHTML = html;
+}
+
+let lastCluIds = new Set();
+function renderClusters(clusters) {
+  const grid = document.getElementById('clu_grid');
+  const currentIds = new Set();
+  const map = {};
+  let maxCount = 1;
+  for (const c of clusters) {
+    map[c.slot_id] = c;
+    currentIds.add(c.slot_id);
+    if (c.total_count > maxCount) maxCount = c.total_count;
+  }
+  for (let sid = 1; sid <= maxSlots; sid++) {
+    const c = map[sid];
+    let card = grid.querySelector(`[data-sid="${sid}"]`);
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'cluster-card';
+      card.dataset.sid = sid;
+      grid.appendChild(card);
+    }
+    if (c) {
+      const latest = c.latest_raw || '';
+      const topEx = (c.top_examples || [])[0] || '';
+      const raw = latest || topEx;
+      const ratio = (c.total_count || 0) / maxCount;
+      const bg = heatColor(ratio);
+      card.innerHTML = `
+        <div class="head">
+          <span class="canonical">[${String(c.slot_id).padStart(2,'0')}] ${esc(c.canonical_text)}</span>
+          <span class="cnt">${c.total_count||0}次</span>
+        </div>
+        ${raw ? `<div class="members" style="margin-top:2px;"><span class="member">${esc(raw.slice(0,20))}</span></div>` : ''}
+      `;
+      card.style.background = bg;
+      card.style.opacity = '1';
+    } else {
+      card.innerHTML = `<div class="head"><span style="color:var(--muted)">[${String(sid).padStart(2,'0')}] —</span></div>`;
+      card.style.opacity = '0.4';
+    }
+  }
+  for (const child of [...grid.children]) {
+    const sid = parseInt(child.dataset.sid);
+    if (sid > maxSlots) child.remove();
+  }
+  lastCluIds = currentIds;
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+const cardWidthSlider = document.getElementById('card_width');
+cardWidthSlider.addEventListener('input', () => {
+  const w = cardWidthSlider.value;
+  document.getElementById('card_width_val').textContent = w + 'px';
+  document.getElementById('clu_grid').style.gridTemplateColumns = `repeat(auto-fill,minmax(${w}px,1fr))`;
+});
+
+// SSE 节流 + 浅比较，防止高速推送卡死页面
+let _pending = null, _timer = null, _lastIngested = -1;
+function throttledApply(s) {
+  if (s.ingested === _lastIngested) return;  // 未变化直接跳过
+  _lastIngested = s.ingested;
+  _pending = s;
+  if (_timer) return;
+  _timer = setTimeout(() => {
+    if (_pending) applyState(_pending);
+    _pending = null; _timer = null;
+  }, 60);  // 最多 60ms 刷新一次
+}
+const es = new EventSource('/events');
+es.addEventListener('state', e => { throttledApply(JSON.parse(e.data)); });
+es.onerror = () => { console.warn('SSE reconnect...'); };
+</script>
+</body>
+</html>

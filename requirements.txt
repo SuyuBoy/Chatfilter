@@ -1,0 +1,7 @@
+numpy>=1.24
+pypinyin>=0.49
+pyyaml>=6.0
+xxhash>=3.3
+jieba>=0.42
+onnxruntime>=1.16
+sentence-transformers>=2.3

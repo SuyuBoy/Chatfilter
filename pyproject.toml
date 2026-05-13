@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chatfilter"
+version = "0.1.0"
+description = "Real-time barrage semantic clustering"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pypinyin>=0.49",
+    "pyyaml>=6.0",
+    "xxhash>=3.3",
+]
+
+[project.optional-dependencies]
+onnx = ["onnxruntime>=1.16"]
+sentence = ["sentence-transformers>=2.3"]
+dev = ["pytest>=7.4", "pytest-asyncio>=0.21"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

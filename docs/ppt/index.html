@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>弹幕语义聚类系统 · Danmaku Clustering</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@300;400;500;600&family=Noto+Serif+SC:wght@300;400;500;600;700;900&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* ============ 主题色(默认:🖋 墨水经典) ============
+       切换主题:从 references/themes.md 复制对应的 :root 块
+       整体替换这几行(--ink / --ink-rgb / --paper / --paper-rgb)
+       其他地方散落的 rgba() 都走 var(--ink-rgb) / var(--paper-rgb),无需逐处改 */
+    --ink:#0a0a0b;
+    --ink-rgb:10,10,11;
+    --paper:#f1efea;
+    --paper-rgb:241,239,234;
+    --paper-tint:#e8e5de;
+    --ink-tint:#18181a;
+
+    /* ============ 字体(跨主题固定) ============ */
+    --mono:"IBM Plex Mono",ui-monospace,monospace;
+    --serif-en:"Playfair Display","Source Serif 4",Georgia,serif;
+    --serif-body-en:"Source Serif 4",Georgia,serif;
+    --serif-zh:"Noto Serif SC",source-han-serif-sc,serif;
+    --sans-zh:"Noto Sans SC",source-han-sans-sc,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--ink);color:var(--paper);font-family:var(--sans-zh);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+
+  /* ============ WebGL 双背景 ============ */
+  canvas.bg{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;display:block;transition:opacity 1.2s ease}
+  canvas#bg-light{opacity:0}
+  canvas#bg-dark{opacity:1}
+  body.light-bg canvas#bg-light{opacity:1}
+  body.light-bg canvas#bg-dark{opacity:0}
+  body.low-power canvas.bg{display:none!important}
+
+  /* ============ Deck 容器 + 翻页 ============ */
+  /* width: NSLIDES * 100vw，会在 JS 里动态矫正 */
+  #deck{position:fixed;inset:0;width:10000vw;height:100vh;display:flex;flex-wrap:nowrap;transition:transform .9s cubic-bezier(.77,0,.175,1);z-index:10;will-change:transform}
+  .slide{width:100vw;height:100vh;flex:0 0 100vw;position:relative;padding:6vh 6vw 10vh 6vw;display:flex;flex-direction:column;overflow:hidden}
+  .slide.light{color:var(--ink);background:var(--paper)}
+  .slide.dark{color:var(--paper);background:var(--ink)}
+
+  /* 默认页：遮罩较厚，保证文字可读 */
+  .slide::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;transition:background .7s ease}
+  .slide.light::before{background:rgba(var(--paper-rgb),.78);backdrop-filter:blur(3px)}
+  .slide.dark::before{background:rgba(var(--ink-rgb),.78);backdrop-filter:blur(3px)}
+  /* Hero 页：遮罩大幅降低，让 WebGL 背景明显透出 */
+  .slide.hero.light::before{background:rgba(var(--paper-rgb),.16);backdrop-filter:none}
+  .slide.hero.dark::before{background:rgba(var(--ink-rgb),.12);backdrop-filter:none}
+  /* Hero 页顶底微弱渐隐，保证 chrome/foot 区域可读 */
+  .slide.hero::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
+  .slide.hero.light::after{background:linear-gradient(180deg,rgba(var(--paper-rgb),.28) 0%,rgba(var(--paper-rgb),0) 14%,rgba(var(--paper-rgb),0) 86%,rgba(var(--paper-rgb),.28) 100%)}
+  .slide.hero.dark::after{background:linear-gradient(180deg,rgba(var(--ink-rgb),.32) 0%,rgba(var(--ink-rgb),0) 14%,rgba(var(--ink-rgb),0) 86%,rgba(var(--ink-rgb),.32) 100%)}
+
+  /* ============ Magazine chrome：顶部 meta + 底部 foot ============ */
+  .chrome{display:flex;justify-content:space-between;align-items:flex-start;font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;opacity:.7}
+  .chrome .left,.chrome .right{display:flex;gap:2.4em;align-items:center}
+  .chrome .sep{width:40px;height:1px;background:currentColor;opacity:.4}
+  .foot{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;opacity:.55}
+  .foot .title{font-family:var(--serif-zh);font-weight:400;letter-spacing:.05em;text-transform:none;opacity:.75;font-size:13px}
+
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;padding:6px 14px;border:1px solid currentColor;opacity:.85}
+  .rule{width:100%;height:1px;background:currentColor;opacity:.25;margin:3vh 0}
+  .rule.v{width:1px;height:100%;margin:0}
+
+  /* ============ 字体规则 ============
+     · 衬线（Noto Serif SC / Playfair）：大标题、重点金句、数字
+     · 非衬线（Noto Sans SC）：正文描述、body、补充说明
+     · 等宽（IBM Plex Mono）：kicker、meta 小标签、foot 右侧
+  */
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.3em;text-transform:uppercase;opacity:.6;margin-bottom:2.6vh}
+  .display{font-family:var(--serif-en);font-weight:700;font-size:11vw;line-height:.92;letter-spacing:-.025em}
+  .display-zh{font-family:var(--serif-zh);font-weight:700;font-size:7.8vw;line-height:1.04;letter-spacing:-.005em}
+  .h1-zh{font-family:var(--serif-zh);font-weight:700;font-size:4.6vw;line-height:1.12;letter-spacing:-.005em}
+  .h2-zh{font-family:var(--serif-zh);font-weight:600;font-size:3.2vw;line-height:1.2;letter-spacing:0}
+  .h3-zh{font-family:var(--serif-zh);font-weight:500;font-size:1.9vw;line-height:1.35}
+  .body-zh{font-family:var(--sans-zh);font-weight:400;font-size:max(15px,1.22vw);line-height:1.75;opacity:.82;letter-spacing:.01em}
+  .body-serif{font-family:var(--serif-zh);font-weight:400;font-size:max(15px,1.3vw);line-height:1.65;opacity:.88}
+  .lead{font-family:var(--serif-zh);font-weight:400;font-size:1.9vw;line-height:1.4;opacity:.85}
+  .meta{font-family:var(--mono);font-size:max(11px,.88vw);letter-spacing:.16em;text-transform:uppercase;opacity:.6}
+  .big-num{font-family:var(--serif-en);font-weight:800;font-size:10vw;line-height:.85;letter-spacing:-.03em;font-feature-settings:"tnum"}
+  .mid-num{font-family:var(--serif-en);font-weight:700;font-size:5.5vw;line-height:.88;letter-spacing:-.02em;font-feature-settings:"tnum"}
+  .ghost{font-family:var(--serif-en);font-weight:900;font-size:34vw;line-height:.8;opacity:.06;letter-spacing:-.04em;position:absolute;font-feature-settings:"tnum"}
+  em{font-style:italic;font-family:var(--serif-en)}
+  .en{font-family:var(--serif-en);font-style:italic;font-weight:500}
+
+  /* ============ 布局工具 ============ */
+  .col{display:flex;flex-direction:column;gap:2.4vh}
+  .row{display:flex;align-items:center;gap:3vw}
+  .grid-6{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:4vw 6vw;flex:1;align-content:center;padding:2vh 0}
+  .grid-9{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:3vh 4vw;flex:1;align-content:center}
+  .grid-4{display:grid;grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,1fr);gap:4vh 6vw;flex:1;align-content:center}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:4vw;flex:1;align-content:center}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:4vw;flex:1;align-items:center}
+  .split-55{display:grid;grid-template-columns:55fr 45fr;gap:5vw;flex:1;align-items:stretch}
+  .fill{flex:1}
+  .center{align-items:center;justify-content:center;text-align:center}
+  .bottom-left{position:absolute;left:6vw;bottom:9vh;max-width:50vw}
+  .bottom-right{position:absolute;right:6vw;bottom:9vh;max-width:50vw;text-align:right}
+  .top-right{position:absolute;right:6vw;top:6vh;text-align:right}
+
+  /* ============ Stat（数字矩阵） ============ */
+  .stat{display:flex;flex-direction:column;gap:1vh;align-items:flex-start}
+  .stat .n{font-family:var(--serif-en);font-weight:800;font-size:8vw;line-height:.88;letter-spacing:-.03em;font-feature-settings:"tnum"}
+  .stat .l{font-family:var(--sans-zh);font-size:max(13px,1.05vw);opacity:.7;margin-top:1vh;font-weight:400;line-height:1.5}
+  .stat .m{font-family:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;opacity:.5;margin-bottom:.2vh}
+
+  /* ============ Callout（引用框） ============ */
+  .callout{padding:3vh 2.4vw;border-left:3px solid currentColor;position:relative;font-family:var(--serif-zh);font-size:max(15px,1.2vw);line-height:1.55;opacity:.92}
+  .slide.light .callout{background:rgba(var(--ink-rgb),.05)}
+  .slide.dark .callout{background:rgba(var(--paper-rgb),.06)}
+  .callout .cite{display:block;margin-top:1.6vh;font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;opacity:.6}
+  .callout .q-big{font-family:var(--serif-zh);font-weight:600;font-size:max(17px,1.6vw);line-height:1.42}
+
+  /* ============ Platform（平台卡） ============ */
+  .plat{display:flex;flex-direction:column;justify-content:flex-end;padding:2vh 0;border-top:1px solid currentColor;border-color:rgba(127,127,127,.35)}
+  .plat .name{font-family:var(--serif-zh);font-weight:700;font-size:1.8vw;margin-bottom:.6vh}
+  .plat .nb{font-family:var(--serif-en);font-weight:700;font-size:3.2vw;letter-spacing:-.02em;line-height:1;font-feature-settings:"tnum"}
+  .plat .sub{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.55;margin-top:.6vh}
+  .plat .fill{font-family:var(--sans-zh);font-weight:300;font-size:2.4vw;opacity:.28;letter-spacing:-.01em;line-height:1}
+
+  /* ============ Rowline（表格行） ============ */
+  .rowline{display:grid;grid-template-columns:1fr 2fr 1fr;gap:2vw;padding:2.2vh 0;border-top:1px solid currentColor;align-items:center;border-color:rgba(127,127,127,.25)}
+  .rowline:last-child{border-bottom:1px solid currentColor;border-color:rgba(127,127,127,.25)}
+  .rowline .k{font-family:var(--serif-zh);font-weight:700;font-size:1.7vw}
+  .rowline .v{font-family:var(--sans-zh);font-weight:400;font-size:max(14px,1.2vw);opacity:.85;line-height:1.55}
+  .rowline .m{font-family:var(--mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;opacity:.6;justify-self:end}
+
+  /* ============ Pillar（支柱卡片） ============ */
+  .pillar{display:flex;flex-direction:column;gap:1.8vh}
+  .pillar .ic{font-family:var(--serif-en);font-style:italic;font-size:2.6vw;opacity:.45;font-weight:400}
+  .pillar .ic svg{width:2.8vw;height:2.8vw;stroke-width:1.2;opacity:.7}
+  .pillar .t{font-family:var(--serif-zh);font-weight:700;font-size:2.4vw;line-height:1.1}
+  .pillar .d{font-family:var(--sans-zh);font-weight:400;font-size:max(14px,1.1vw);opacity:.76;line-height:1.6}
+
+  /* ============ Signature / Highlight ============ */
+  .sign{font-family:var(--serif-en);font-style:italic;font-weight:500;font-size:2vw;opacity:.7}
+  .hi{position:relative;display:inline}
+  .slide.dark .hi::after{content:"";position:absolute;left:-.1em;right:-.1em;bottom:-.05em;height:.28em;background:rgba(var(--paper-rgb),.15);z-index:-1}
+  .slide.light .hi::after{content:"";position:absolute;left:-.1em;right:-.1em;bottom:-.05em;height:.28em;background:rgba(var(--ink-rgb),.08);z-index:-1}
+
+  /* ============ Icons（Lucide via CDN） ============ */
+  .ico{width:1em;height:1em;display:inline-block;vertical-align:-.12em;stroke:currentColor;fill:none;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .ico-lg,.ico-md,.ico-sm{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}
+  .ico-lg{width:2.6vw;height:2.6vw;stroke-width:1.2;display:inline-block}
+  .ico-md{width:1.8vw;height:1.8vw;stroke-width:1.3;display:inline-block;vertical-align:-.4em}
+  .ico-sm{width:1.1vw;height:1.1vw;stroke-width:1.4;display:inline-block;vertical-align:-.15em;opacity:.7}
+
+  /* ============ 图片占位（虚线框，提示设计师位置） ============ */
+  .img-slot{border:1.5px dashed rgba(127,127,127,.4);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1vh;padding:2vh 2vw;font-family:var(--mono);font-size:10px;letter-spacing:.28em;text-transform:uppercase;opacity:.55;position:relative;aspect-ratio:16/9;width:100%;max-height:56vh;margin-inline:auto;box-sizing:border-box}
+  .img-slot::before{content:"";position:absolute;inset:8px;border:1px solid currentColor;opacity:.2}
+  .img-slot .plus{font-size:2vw;font-weight:300;opacity:.5;letter-spacing:0}
+  .img-slot .label{position:relative;z-index:2;text-align:center}
+  .img-slot.r-4x3{aspect-ratio:4/3}
+  .img-slot.r-3x2{aspect-ratio:3/2}
+  .img-slot.r-1x1{aspect-ratio:1/1}
+
+  /* ============ 图片实填框（关键：固定高度 + 只裁底部） ============
+     重要约束：高度用内联 height:Nvh 精确控制，不要用 aspect-ratio（会撑破布局）
+     object-position:top center 保证严禁裁剪顶部和左右，只裁剪底部
+  */
+  .frame-img{overflow:hidden;position:relative;background:rgba(0,0,0,.04);box-sizing:border-box;width:100%;border-radius:4px}
+  .slide.dark .frame-img{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.12)}
+  .frame-img > img{width:100%;height:100%;object-fit:cover;object-position:top center;display:block}
+  .frame-img.fit-contain > img{object-fit:contain;object-position:center center}
+  .frame-img.r-16x9{aspect-ratio:16/9;max-height:64vh}
+  .frame-img.r-16x10{aspect-ratio:16/10;max-height:56vh}
+  .frame-img.r-4x3{aspect-ratio:4/3;max-height:56vh}
+  .frame-img.r-3x2{aspect-ratio:3/2;max-height:46vh}
+  .frame-img.r-3x4{aspect-ratio:3/4;max-height:60vh}
+  .frame-img.r-1x1{aspect-ratio:1/1;max-height:50vh}
+  .frame-img.h-16{height:16vh}
+  .frame-img.h-18{height:18vh}
+  .frame-img.h-22{height:22vh}
+  .frame-img.h-26{height:26vh}
+  .frame-img.h-28{height:28vh}
+  .frame-cap{display:flex;justify-content:space-between;align-items:baseline;gap:1vw;margin-top:.8vh;font-family:var(--mono);font-size:10px;letter-spacing:.22em;text-transform:uppercase;opacity:.72}
+  .frame-cap .pf{font-family:var(--serif-zh);font-weight:600;font-size:max(13px,1vw);letter-spacing:.04em;text-transform:none;opacity:.94}
+  .frame-cap .nb{font-family:var(--serif-en);font-style:italic;font-size:max(15px,1.2vw);letter-spacing:.02em;text-transform:none;opacity:.88}
+  .frame-cap .idx{font-family:var(--mono);opacity:.5}
+  figure.tile{display:flex;flex-direction:column;margin:0;min-width:0}
+  figure.tile > .frame-img{flex:0 0 auto}
+
+  /* ============ 导航 ============ */
+  #nav{position:fixed;left:50%;bottom:2.6vh;transform:translateX(-50%);z-index:30;display:flex;gap:10px;padding:8px 14px;border-radius:999px;background:rgba(0,0,0,.18);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+  #nav .dot{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.3);cursor:pointer;transition:all .3s ease;border:0;padding:0}
+  #nav .dot:hover{background:rgba(255,255,255,.5);transform:scale(1.15)}
+  #nav .dot.active{background:rgba(255,255,255,.95);width:22px;border-radius:999px}
+  body.light-bg #nav{background:rgba(255,255,255,.25)}
+  body.light-bg #nav .dot{background:rgba(var(--ink-rgb),.25)}
+  body.light-bg #nav .dot.active{background:rgba(var(--ink-rgb),.9)}
+  #hint{position:fixed;bottom:3vh;right:3vw;z-index:30;font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;opacity:.4;mix-blend-mode:difference;color:#aaa}
+  body.low-power #hint{opacity:.72;color:var(--paper);mix-blend-mode:normal}
+  body.light-bg.low-power #hint{color:var(--ink)}
+
+  /* ============================================================
+     ============ LAYOUTS API · 面向 agent 的类（v2）============
+     所有 layouts.md 中的骨架都基于下面这套命名。
+     如果你在 layouts.md 里看到某个类，它必须在下面有定义。
+     ============================================================ */
+
+  /* ---------- .frame：每页主内容容器 ---------- */
+  .frame{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  /* 当 .frame 同时加了 grid 类时，grid 的 display:grid 覆盖 flex */
+  .frame.grid-2-7-5,
+  .frame.grid-2-6-6,
+  .frame.grid-2-8-4,
+  .frame.grid-3-3,
+  .frame.grid-6{display:grid}
+
+  /* ---------- 标题层级（API 名称，衬线为主） ---------- */
+  .h-hero{
+    font-family:var(--serif-zh);
+    font-weight:900;
+    font-size:10vw;
+    line-height:.96;
+    letter-spacing:-.02em;
+  }
+  .h-xl{
+    font-family:var(--serif-zh);
+    font-weight:700;
+    font-size:6.2vw;
+    line-height:1.08;
+    letter-spacing:-.01em;
+  }
+  .h-sub{
+    font-family:var(--serif-zh);
+    font-weight:500;
+    font-size:3.1vw;
+    line-height:1.25;
+    letter-spacing:0;
+    opacity:.7;
+  }
+  .h-md{
+    font-family:var(--serif-zh);
+    font-weight:600;
+    font-size:2.3vw;
+    line-height:1.3;
+  }
+  /* 英文标题专用（Playfair 衬线） */
+  .h-hero-en,.h-xl-en{font-family:var(--serif-en);letter-spacing:-.025em}
+
+  /* ---------- lead 引语 ---------- */
+  .lead{
+    font-family:var(--serif-zh);
+    font-weight:400;
+    font-size:1.75vw;
+    line-height:1.5;
+    opacity:.86;
+  }
+
+  /* ---------- meta-row 底部元数据 ---------- */
+  .meta-row{
+    display:flex;
+    gap:1.2em;
+    align-items:baseline;
+    flex-wrap:wrap;
+    font-family:var(--mono);
+    font-size:max(12px,.92vw);
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    opacity:.6;
+  }
+
+  /* ---------- stat-card（数据大字报用） ---------- */
+  .stat-card{
+    display:flex;
+    flex-direction:column;
+    gap:.8vh;
+    align-items:flex-start;
+    padding-top:1.6vh;
+    border-top:1px solid currentColor;
+    border-color:rgba(127,127,127,.3);
+  }
+  .stat-card .stat-label{
+    font-family:var(--mono);
+    font-size:max(10px,.78vw);
+    letter-spacing:.24em;
+    text-transform:uppercase;
+    opacity:.55;
+  }
+  .stat-card .stat-nb{
+    font-family:var(--serif-en);
+    font-weight:800;
+    font-size:5.8vw;
+    line-height:.9;
+    letter-spacing:-.03em;
+    font-feature-settings:"tnum";
+    margin-top:.4vh;
+  }
+  .stat-card .stat-nb .stat-unit{
+    font-family:var(--serif-zh);
+    font-weight:500;
+    font-size:.38em;
+    letter-spacing:0;
+    opacity:.72;
+    margin-left:.14em;
+  }
+  .stat-card .stat-note{
+    font-family:var(--sans-zh);
+    font-weight:400;
+    font-size:max(13px,1.05vw);
+    line-height:1.5;
+    opacity:.72;
+    margin-top:.6vh;
+  }
+  /* 当 stat-card 用于 grid-4（2x2），数字适度放大；若页面有标题+引文在上方，可内联 style 覆盖为更小值 */
+  .grid-4 .stat-card .stat-nb{font-size:5vw}
+  /* 当只有 3 个，字也可以稍大 */
+  .grid-3 .stat-card .stat-nb{font-size:6.8vw}
+
+  /* ---------- pipeline（流水线） ---------- */
+  .pipeline-section{
+    margin-top:4.4vh;
+    padding-top:2.8vh;
+    border-top:1px dashed rgba(127,127,127,.32);
+  }
+  .pipeline-section:first-of-type{
+    border-top:0;
+    padding-top:0;
+    margin-top:3vh;
+  }
+  .pipeline-label{
+    font-family:var(--mono);
+    font-size:max(11px,.85vw);
+    letter-spacing:.24em;
+    text-transform:uppercase;
+    opacity:.62;
+    margin-bottom:2.2vh;
+  }
+  .pipeline{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:1.2vw;
+  }
+  .pipeline[data-cols="3"]{grid-template-columns:repeat(3,1fr)}
+  .pipeline[data-cols="4"]{grid-template-columns:repeat(4,1fr)}
+  .pipeline[data-cols="6"]{grid-template-columns:repeat(6,1fr)}
+  .step{
+    display:flex;
+    flex-direction:column;
+    gap:.8vh;
+    padding-top:1.4vh;
+    border-top:1px solid currentColor;
+    border-color:rgba(127,127,127,.35);
+  }
+  .step-nb{
+    font-family:var(--serif-en);
+    font-style:italic;
+    font-weight:500;
+    font-size:1.15vw;
+    opacity:.45;
+  }
+  .step-title{
+    font-family:var(--sans-zh);
+    font-weight:700;
+    font-size:1.55vw;
+    letter-spacing:.01em;
+    line-height:1.2;
+  }
+  .step-desc{
+    font-family:var(--sans-zh);
+    font-weight:400;
+    font-size:max(12px,.95vw);
+    line-height:1.45;
+    opacity:.72;
+  }
+
+  /* ---------- 网格（layouts.md 所用） ---------- */
+  /* 这些类独立挂到任何容器上都能生效，不依赖 .frame 复合选择器 */
+  .grid-2-7-5{display:grid;grid-template-columns:7fr 5fr;gap:3vw 4vh;align-items:start}
+  .grid-2-6-6{display:grid;grid-template-columns:1fr 1fr;gap:3vw 4vh;align-items:start}
+  .grid-2-8-4{display:grid;grid-template-columns:8fr 4fr;gap:3vw 4vh;align-items:start}
+  .grid-3-3{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    grid-auto-rows:minmax(0,1fr);
+    gap:2.4vh 2vw;
+  }
+  /* grid-6 已在旧样式里定义为 3x2，这里仅补 align */
+
+  /* ---------- 图片 frame-img（layouts.md 主命名） ---------- */
+  /* 在旧样式里已定义，这里补 img-cap 命名别名与增强 */
+  figure.frame-img{margin:0;display:flex;flex-direction:column;min-width:0}
+  .img-cap{
+    display:block;
+    margin-top:.8vh;
+    font-family:var(--mono);
+    font-size:max(10px,.8vw);
+    letter-spacing:.22em;
+    text-transform:uppercase;
+    opacity:.6;
+  }
+  /* callout src 命名别名 */
+  .callout-src{
+    display:block;
+    margin-top:1.6vh;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.2em;
+    text-transform:uppercase;
+    opacity:.6;
+  }
+
+  /* ---------- chrome & foot 补位（layouts.md 简单写法） ---------- */
+  .chrome{font-family:var(--mono);font-size:max(11px,.78vw);letter-spacing:.2em;text-transform:uppercase;opacity:.62}
+  .foot{font-family:var(--mono);font-size:max(11px,.78vw);letter-spacing:.18em;text-transform:uppercase;opacity:.5}
+
+  /* ============ 动效系统(Motion One 驱动) ============
+     所有 [data-anim] 元素默认隐藏,进入页面时由 JS 逐个揭示。
+     - cascade(默认):按 DOM 顺序 stagger 120ms 淡入 + y:16→0
+     - hero(hero 页自动):慢一点的 stagger 180ms
+     - quote(含 [data-anim="line"]):逐行 600ms 淡入
+     - directional(含 [data-anim="left|right"]):左→分隔线→右
+     - pipeline(data-animate="pipeline"):Space/→ 手动推进
+     Motion One 没加载成功时(CDN 断 + 本地丢),所有 [data-anim] 会兜底显示。
+  */
+  [data-anim]{opacity:1}
+  body.motion-ready [data-anim]{opacity:0}
+  body.motion-ready [data-anim="left"]{transform:translateX(-24px)}
+  body.motion-ready [data-anim="right"]{transform:translateX(24px)}
+  body.motion-ready [data-anim="line"]{opacity:0;transform:translateY(10px)}
+  body.motion-ready [data-animate="pipeline"] [data-anim]{opacity:.15}
+  body.low-power #deck{transition:none!important}
+  body.low-power *,
+  body.low-power *::before,
+  body.low-power *::after{animation:none!important;transition:none!important}
+  body.low-power.motion-ready [data-anim],
+  body.low-power [data-anim]{opacity:1!important;transform:none!important}
+
+  /* ---------- 响应式降级 ---------- */
+  @media (max-width:900px){
+    .display{font-size:16vw}
+    .display-zh{font-size:12vw}
+    .h1-zh{font-size:7vw}
+    .h-hero{font-size:14vw}
+    .h-xl{font-size:9vw}
+    .pipeline{grid-template-columns:repeat(2,1fr)}
+    .grid-2-7-5,.grid-2-6-6,.grid-2-8-4{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<script>
+  (function(){
+    const KEY = 'guizang-ppt-low-power';
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const stored = localStorage.getItem(KEY);
+    window.__lowPowerMode = stored === '1' || (stored === null && reduced);
+    function updateHint(){
+      const hint = document.getElementById('hint');
+      if(hint) hint.textContent = `← → 翻页 · B ${window.__lowPowerMode ? '动态' : '静态'} · ESC 索引`;
+    }
+    window.__setLowPowerMode = function(on, opts={}){
+      window.__lowPowerMode = !!on;
+      document.body.classList.toggle('low-power', window.__lowPowerMode);
+      if(opts.persist !== false) localStorage.setItem(KEY, window.__lowPowerMode ? '1' : '0');
+      if(window.__lowPowerMode && document.getAnimations){
+        document.getAnimations().forEach(a=>a.cancel());
+      }
+      updateHint();
+      dispatchEvent(new CustomEvent('ppt-low-power-change', {detail:{on:window.__lowPowerMode}}));
+      if(window.__playSlide) window.__playSlide(window.__currentSlideIndex || 0);
+    };
+    document.body.classList.toggle('low-power', window.__lowPowerMode);
+    addEventListener('DOMContentLoaded', updateHint, {once:true});
+  })();
+</script>
+
+<canvas id="bg-dark" class="bg"></canvas>
+<canvas id="bg-light" class="bg"></canvas>
+<div id="hint">← → 翻页 · B 静态 · ESC 索引</div>
+
+<div id="deck">
+
+<!-- ============================================================
+     SLIDES 插入区 · 在此处填充所有 <section class="slide ..."> 页面
+     每页模板参考 references/page-patterns.md
+     页面组件参考 references/components.md
+     ============================================================ -->
+
+<!-- SLIDES - 弹幕语义聚类系统 v4.2 · 墨水经典主题 -->
+
+<!-- 1. Cover -->
+<section class="slide hero dark">
+  <div class="chrome">
+    <div>Danmaku Clustering · v4.2</div>
+    <div>Vol.01</div>
+  </div>
+  <div class="frame" style="display:grid; gap:3.6vh; align-content:center; min-height:80vh">
+    <div class="kicker" data-anim>实时流式 · 纯 Python · 200 msg/s</div>
+    <h1 class="h-hero" data-anim>弹幕语义聚类</h1>
+    <h2 class="h-sub" data-anim>从噪声中提取信号</h2>
+    <p class="lead" style="max-width:50vw" data-anim>
+      直播间每秒涌入数百条弹幕——"牛逼""牛批""666""？？？""主播好棒"。
+      实时识别哪些是同一语义，哪些是噪音，哪些是正在爆发的热点。
+    </p>
+    <div class="meta-row" data-anim>
+      <span>v4.2</span><span>·</span><span>2026-05-12</span><span>·</span><span>44,497 条测试</span>
+    </div>
+  </div>
+  <div class="foot">
+    <div>弹幕实时语义聚类系统 · 从噪声中提取信号</div>
+    <div>— 2026 —</div>
+  </div>
+</section>
+
+<!-- 2. Why Semantic Clustering -->
+<section class="slide dark">
+  <div class="chrome">
+    <div>动机 · Motivation</div>
+    <div>Act I · 02 / 13</div>
+  </div>
+  <div class="frame" style="padding-top:4vh">
+    <div class="kicker" data-anim>为什么需要语义聚类？</div>
+    <h2 class="h-xl" data-anim>传统方案的问题</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4vh 5vw;margin-top:4vh">
+      <div data-anim>
+        <div class="callout" style="margin-bottom:2vh">
+          <div class="q-big">❌ 关键词匹配</div>
+          <p style="margin-top:1vh">"牛批" 和 "牛逼" 零字符重叠，正则表达式永远匹配不到。弹幕变体是无底洞——观众每天都在发明新的规避词。</p>
+        </div>
+        <div class="callout" style="margin-bottom:2vh">
+          <div class="q-big">❌ 编辑距离</div>
+          <p style="margin-top:1vh">2 字符编辑距离 = 遍历全部 12k 唯一文本进行 pairwise 比较。O(n²) 复杂度，200 msg/s 下 CPU 直接打满。</p>
+        </div>
+      </div>
+      <div data-anim>
+        <div class="callout">
+          <div class="q-big">✅ 语义 Embedding</div>
+          <p style="margin-top:1vh">"牛批""牛B""niubi""牛逼" 在 BGE 向量空间中彼此靠近。不需要知道变体长什么样——模型自己学会了"这些词意思一样"。</p>
+        </div>
+        <div style="display:flex;gap:3vw;margin-top:3vh">
+          <div class="stat"><div class="n" style="font-size:4vw">80<span style="font-size:.5em">%+</span></div><div class="l">变体覆盖率 (字典+拼音)</div></div>
+          <div class="stat"><div class="n" style="font-size:4vw">63<span style="font-size:.5em">%↑</span></div><div class="l">微调后相似度提升</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><div>关键词匹配 vs 编辑距离 vs 语义 Embedding</div><div>— · —</div></div>
+</section>
+
+<!-- 3. Data Overview -->
+<section class="slide light">
+  <div class="chrome"><div>数据 · Data</div><div>Act I · 03 / 13</div></div>
+  <div class="frame" style="padding-top:5vh">
+    <div class="kicker" data-anim>先看数字。</div>
+    <h2 class="h-xl" data-anim>44,497 条弹幕实测</h2>
+    <div class="grid-6" style="margin-top:5vh">
+      <div class="stat" data-anim><div class="m">总摄入</div><div class="n">44,497</div><div class="l">弹幕消息</div></div>
+      <div class="stat" data-anim><div class="m">唯一文本</div><div class="n">12,701</div><div class="l">去重后的独立表达</div></div>
+      <div class="stat" data-anim><div class="m">去重率</div><div class="n">71.5<span style="font-size:.6em">%</span></div><div class="l">近 3/4 弹幕是重复/变体</div></div>
+      <div class="stat" data-anim><div class="m">缓存命中</div><div class="n">71.5<span style="font-size:.6em">%</span></div><div class="l">统一缓存 (Pipeline+Emb)</div></div>
+      <div class="stat" data-anim><div class="m">emb 耗时</div><div class="n">1.0<span style="font-size:.5em">ms</span></div><div class="l">缓存命中后平均耗时</div></div>
+      <div class="stat" data-anim><div class="m">聚类槽位</div><div class="n">40</div><div class="l">常规 + 热点不限数量</div></div>
+    </div>
+    <div class="callout" style="margin-top:4vh" data-anim>
+      <div class="q-big">关键洞察</div>
+      <p>弹幕是高冗余媒体——70% 以上的消息是重复或变体。去重 + 缓存命中后，真正需要 Embedding 计算的不足 30%，CPU 负载大幅降低。</p>
+    </div>
+  </div>
+  <div class="foot"><div>44,497 条弹幕 CSV 测试结果 · 单机 CPU</div><div>— · —</div></div>
+</section>
+
+<!-- 4. Architecture Diagram -->
+<section class="slide light">
+  <div class="chrome"><div>架构图 · Diagram</div><div>Act I · 04 / 13</div></div>
+  <div class="frame" style="padding-top:2vh;display:flex;flex-direction:column;height:100%">
+    <div class="kicker" data-anim>端到端数据流</div>
+    <h2 class="h-xl" data-anim>系统架构流程图</h2>
+    <div style="flex:1;margin-top:2vh;border:1px solid rgba(var(--ink-rgb),.12);overflow:hidden;position:relative;min-height:0">
+      <iframe src="https://viewer.diagrams.net/?tags=%7B%7D&lightbox=1&edit=_blank#R1ZprU9tWGsff51OcdWc6MKxBV18A08nSpNlpss3UtNt9KVvHthpZ8kji1lckhEugkNCEJU1CCWmyJc0AybbTcs%2FMfpQOkuxvsUdH1sUgB2QcCnkTo3N0%2Bf%2FOc57LOaf7o6GiCAagogqylIqQ7UQEQCkr84KUT0W%2B6LscTUQ%2B6rnQXRzKCSIEBVnVUhFe4QYFOeLdRsXaCXRnzwUAunmByytcEUhcEaYiF5VsQdBgVutXIG5HPYpDnyhcqXBN5qEI%2BCH01hiBXssPpyJJgqj2Qv0UWdacP%2FBtvVAUgcCnIqh3R3ALGQElToGS5nTyev0lGgVXuWGoAJHLQFEFLSLMaUAVeNgKotHg54noKQOc2I%2BkGPOvjZm1ysRE5fF4BKjasIguanBI6ypoRTFFduVkSUsL38AUSeHfvbIoK6kPYtkEzOTsVnwT2cWJQl5KKUK%2BoHVhjOgxNd9ORnosTFAuQk0ZBqiRQh%2BCAJEkGwGDAq8VUpEEulSA1kNQMxMBnJqK5Ku3RDp6ujtsHXWEka4wc3fO3H6iv7kVRhUfy8TYWJNU0STRJFWUq6ry7Lb%2B%2FLZ5b7zN3Lmvrz4MIy5BZehYs8SxPnEkcSJ1tKuuvL66v3mnvLZsri2EGrZ4MkMQTVIWb9qwMa4w%2Fc28%2BXwrpDEmY3Gaa9Z4JRtRFeRmVIjexWkycjiCBNW6Pgb18yajKxtK%2FEVFkQdTkizBLp5TC5BHuqogVE2Rb8Cq%2FF78D8mEfB6%2BS2RVFetTZf1WoMhpwoB9a41E6%2B7rsiBpFh%2Fa5kNZUKxeqtyvZCFutlj4epJk4kBfjVPyUHP7dngfdYRpIDjUOYLDhIDDNAMOfY7gxELAiTUDDnOO4CRCwEmEglPrmz6XBwHZCT7mNA6k8avqe6asOuAS7E1%2FCfSdTX1zXr87Vxm5ab5a%2F%2FCDIa6LYW4AY3EZ%2FO93oI%2FMVEaW9Mc%2FGA%2F2ABmNEUMudkXul3hMetDKB9MlLgtTgygNdD27IIpOjOJgIpetHQt%2FEoX9P%2B3z9sRxPTzJVvl5SRRF%2BkbNwXrswFXkpH5O9FLEO9P61Ep5774%2B9gLD%2BSfMABuXsTx%2BRmGQ9Wiw7LEDnmVUVCe40td3HaShgt5f16YKmlZygV0TJOEKulC9B9kQpw5LWau4qLJSB4WiyKGpqiJbt%2BXShB9QLpejsgcA%2BZNTDIg5LhSGOmwh%2FpyNjIc1EVRIQVVzFV%2F%2FLN0HOpyLxzYIX94TqARTPSSmGmc8LSTl08KElaIil%2BoKSacvgQ44gN6uAmN2BZn4KckhiUb0HLZXuhNcF0rQys3qGmup2sHzghyKG0KWEz%2BHeUG1PgzZbMxYfeGWGybKybfeHt9%2BeRYmeKbWfv31Rzj7dSY17YdE0H4Lfue0Dhx2Lzv9Y%2B4p0Je2zOURY2PM%2BHUBO7l%2FXP60V9%2F9bn9jRP%2F2340YQY3DQ%2B6OhclAHoEM3CGqk877rZ8%2BrncLxED5MCyDrwWY4fTJ8fL6TJs%2B%2BUq%2FN4NhDHCKwKE5Ub75AIWCs0MDO66m4qB9OJ6hKPdwf%2Fe%2BawaYhb66oI9ttJUnfkYojOmdytIvZwcI3XT7YHxAfgT63s%2Fm7Lo%2BO23uvMQ0FJiHQ2dHPxNgENbiUuP6WZ%2F%2B5yAtFK%2Bg7BpLL%2B%2BN6VMvjZVl85eps0MgZvnIphKI%2BQi8AOZ%2F98zlNX12uzJh%2B4aPId9fSmuyAs8OhPgRSUJoCFkuW%2FDipbm9hByCvQJnvHmKMbRknSD6VwCLGchbi82ttseY293fWAV%2FjH8HzKXV8u%2Fr%2BthKZXRlf2Pa2NhoLL%2FwQyNRsI3XQgtYOgoZZhLOyqy3bMT4CdLHT6PTGiwBzipP69dk0ArHTjGLClP7q2VFK8h5WeLES861Lg%2BT13pVlkvowtdQ04YxIa5fkx1scEjQvqr%2B%2F68U0c52IenK8FeopsA%2F7GsB9bCXJtnFq50z2MUpDpw10OrXxUfZFrRi8NnXTvm0083TTp8H7bRPO9M87cx50M74tLPN086eB%2B2sT3usadqzXulhLL04sJHzXmhgCpgH6dJop1gXiC%2B2EN7yYei5YUfJpmHyShM7gtrB832TigegitdBFRR0T4%2Fa4eqf6QR%2F%2B%2BQSaAO9Yr%2BqQQWlIHVDbibvJTTWTZecpAXnLKg1qhY5UYx%2BU4gOkO2stSTAkhSPW40nd8zHc%2Bbij%2FreWvn1KGghiaS%2BvmmXS62NpDR07eoXjB1a%2FbL3%2BEKuGMSSXv5C%2BZeyE8fLX%2FwpoI3Us8knK%2BbW2%2FLNR%2BabbX1n3rg%2FG2J5L5GFBwVmEizDEg0t78V9uwtVsXH%2FmideXAq3d5lzdV6FHA%2BV6GVZFOVBqNgZ7d1vKw8n9ZGdtsqDR%2BYtNPAzxs4t86fttsr8W33rP8boS3P30YnrgVwuR%2BSIQEyBaJwhOmwNdjVAedVAkq3d1gi5QG5tTXjOacV4smRu%2F2pMPbdmibF%2BlyYIY3HZRnVvUt%2F8raWHaE9SrWhmfhq9BjlJNabH9cnxlhspqvXMYKKoQ5zwpYY5FWSPkjm6igzF3uG3KPWQiNH30%2FrMBMa0vzFT%2Bf6eMf%2B6MnHXaiaJoiCBvr6rmOjomHF7SV%2Bb1GdenRlaTOwEtA67brYTWPsqX%2Fy9rsMehBmXJt6CWfvBWPgN%2BWFj9qfK4jNj8S0maS1h0%2Frkgt1s4bOnKvLT5alb1t%2F2UBhPMWg7%2FegojyxYD9teKq8tN4KYaVZJGuDenP2tZJ1aNH580l%2BiF1o1ulOPZqA2CKEE3lmcDgQdZDi1NM2feiAPfFESiig3kKXgBI30cgy8z%2BkkGYf3HhrPzAaoP5MH3SgPe4%2FOARK89HECKPSpQaGbaCReauqAsfLCZjFhTonJUdVeOCY4M3az8yD3fwIk7Pn0JU7y62CxgtGJSxYrVPGCArMaPkwGWuzSs%2F7BVVWFNVu1doyzN2rBh6LWxRbV94XVn04EVSZu2ezwp46oucN4qxC4e7ovKgo3jC%2BWrDM0au3JHKdaYAniwEmcoxqSKL2xBhM%2F%2F4hzOd0d3kFn3NM9HI3PU3dUD1T3XLAarVPYPRf%2BDw%3D%3D" style="width:100%;height:100%;border:none" allowfullscreen></iframe>
+    </div>
+    <div class="meta-row" style="margin-top:1vh;font-size:11px;opacity:.5">
+      数据采集 → 网络层 → 预处理(6步+缓存) → BGE Embedding → 在线聚类 → Web UI · 点击图内元素可交互
+    </div>
+  </div>
+  <div class="foot"><div>CSV/手动输入 → asyncio HTTP Server(SSE) → Pipeline(6步+统一缓存) → BGE → Clustering → Web UI</div><div>— · —</div></div>
+</section>
+<!-- 4. Architecture -->
+<section class="slide dark">
+  <div class="chrome"><div>架构 · Architecture</div><div>Act I · 05 / 13</div></div>
+  <div class="frame" style="padding-top:4vh">
+    <div class="kicker" data-anim>端到端数据流</div>
+    <h2 class="h-xl" data-anim>系统架构</h2>
+    <div style="display:flex;gap:0.8vw;margin-top:5vh;flex-wrap:nowrap;justify-content:center;align-items:flex-start" data-anim>
+      <div class="pillar" style="max-width:10vw"><div class="ic">📤</div><div class="t">发送端</div><div class="d">CSV 弹幕列表<br>按时间戳顺序回放<br>支持 1-60x 倍速</div></div>
+      <div style="font-size:2vw;opacity:.25;align-self:center;flex-shrink:0">→</div>
+      <div class="pillar" style="max-width:10vw"><div class="ic">🌐</div><div class="t">HTTP Server</div><div class="d">asyncio 极简服务<br>SSE 实时事件推送<br>/ingest /events</div></div>
+      <div style="font-size:2vw;opacity:.25;align-self:center;flex-shrink:0">→</div>
+      <div class="pillar" style="max-width:10vw"><div class="ic">🔧</div><div class="t">预处理管线</div><div class="d">① 清洗 ② 分词+别名<br>③ 变体 ④ 循环压缩<br>⑤ SimHash ⑥ 去重</div></div>
+      <div style="font-size:2vw;opacity:.25;align-self:center;flex-shrink:0">→</div>
+      <div class="pillar" style="max-width:10vw"><div class="ic">🧠</div><div class="t">Embedding</div><div class="d">BGE-small-zh 512d<br>统一缓存池<br>有监督微调</div></div>
+      <div style="font-size:2vw;opacity:.25;align-self:center;flex-shrink:0">→</div>
+      <div class="pillar" style="max-width:10vw"><div class="ic">📊</div><div class="t">聚类引擎</div><div class="d">Leader-Follower<br>周期合并/拆分<br>热点语义晋升</div></div>
+      <div style="font-size:2vw;opacity:.25;align-self:center;flex-shrink:0">→</div>
+      <div class="pillar" style="max-width:10vw"><div class="ic">🖥️</div><div class="t">Web UI</div><div class="d">SSE 3 列实时面板<br>阈值调节 + 热点栏<br>缓存/耗时统计</div></div>
+    </div>
+  </div>
+  <div class="foot"><div>CSV Sender → asyncio HTTP Server → 6-step Pipeline → BGE Embedding → Clustering → Web UI</div><div>— · —</div></div>
+</section>
+
+<!-- 5. Preprocessing - part 1 -->
+<section class="slide light">
+  <div class="chrome"><div>预处理 · Pipeline Steps 1-3</div><div>Act II · 06 / 13</div></div>
+  <div class="frame" style="padding-top:4vh">
+    <div class="kicker" data-anim>每一步解决一类噪声</div>
+    <h2 class="h-xl" data-anim>预处理管线 (上)</h2>
+    <div class="rowline" data-anim style="margin-top:4vh">
+      <div class="k">① 基础清洗</div>
+      <div class="v">移除控制字符、统一全角半角、NFKC 归一化、1-128 字裁剪。过滤纯数字 >4 字但不杀短数字梗 (666/520)。<br><span style="opacity:.6">目的: 把输入格式统一，扔掉明显垃圾，不确定的留给后续步骤。</span></div>
+      <div class="m">O(n)</div>
+    </div>
+    <div class="rowline" data-anim>
+      <div class="k">② jieba 分词</div>
+      <div class="v">variants.yaml 联动 jieba 词典: 规范词 + 变体词全部加入词典并 suggest_freq 调权。只替换完整词，不碰子串——<br>"东南亭子" 不会被误杀成 "东南难听子"。<br><span style="opacity:.6">目的: 子串扫描改词级替换，消灭"小满好棒"→"主播好棒"这类别名错位。防子串误匹配是核心价值。</span></div>
+      <div class="m">O(n)</div>
+    </div>
+    <div class="rowline" data-anim>
+      <div class="k">③ 变体归一</div>
+      <div class="v">双层: 谐音字典精确匹配 ("牛批"→"牛逼") + 规范词自身拼音自动反向生成。<br>声调天然防误匹配——lai2le ≠ lai4le。<br><span style="opacity:.6">目的: SimHash 对音近字完全无效 (汉明距离 ~40)。字典 + 拼音双保险覆盖 80%+ 变体，无需手动维护 pinyin 配置。</span></div>
+      <div class="m">O(n)</div>
+    </div>
+  </div>
+  <div class="foot"><div>① 基础清洗 → ② jieba 分词 + 别名替换 → ③ 变体归一化 (字典 + 自动拼音 + 声调)</div><div>— · —</div></div>
+</section>
+
+<!-- 6. Preprocessing - part 2 -->
+<section class="slide light">
+  <div class="chrome"><div>预处理 · Pipeline Steps 4-6</div><div>Act II · 07 / 13</div></div>
+  <div class="frame" style="padding-top:3vh">
+    <h2 class="h-xl" data-anim>预处理管线 (下)</h2>
+    <div class="rowline" data-anim style="margin-top:4vh">
+      <div class="k">④ 循环压缩</div>
+      <div class="v">(.+?)\1{2,} 正则反向引用。容忍尾部残余，不再要求整除——"加油加油加油加"→"加油加"。<br><span style="opacity:.6">目的: 弹幕刷屏产生大量重复文本，压缩后减少 Embedding 计算量，同时保留语义信息。</span></div>
+      <div class="m">O(n)</div>
+    </div>
+    <div class="rowline" data-anim>
+      <div class="k">⑤ SimHash</div>
+      <div class="v">≥8 字长文本 + 汉明距离 ≤2 → 高置信度自动合并。短文本 (<8 字) 仅写候选日志，不自动合并。<br><span style="opacity:.6">目的: 变体字典 + 拼音已覆盖 80%+，SimHash 降级为辅助角色，处理字典遗漏的长文本近重复。</span></div>
+      <div class="m">O(1)</div>
+    </div>
+    <div class="rowline" data-anim>
+      <div class="k">⑥ 精确去重</div>
+      <div class="v">哈希表 O(1) 查找 + 频次累加。原始弹幕文本作为成员保留在 DedupStore._members 中。<br><span style="opacity:.6">目的: 精确去重是所有语义归一化的终点——经过前面 5 步后同义的文本落到同一 canonical，计数自然累积。成员保留实现内容穿透。</span></div>
+      <div class="m">O(1)</div>
+    </div>
+    <div class="callout" style="margin-top:3vh" data-anim>
+      <div class="q-big">管线设计原则</div>
+      <p>每一步解决一类特定的噪声，各司其职、互不重叠。顺序固定：清洗→别名→变体→压缩→SimHash→去重。精确去重在最后，计数自然累积。管道正向查缓存，命中则短路。</p>
+    </div>
+  </div>
+  <div class="foot"><div>④ 循环节压缩 → ⑤ SimHash 辅助模糊 → ⑥ 精确去重 + 频次计数</div><div>— · —</div></div>
+</section>
+
+<!-- 7. Unified Cache -->
+<section class="slide hero dark">
+  <div class="chrome"><div>缓存 · Cache</div><div>Act III · 08 / 13</div></div>
+  <div class="frame" style="display:grid; gap:3vh; align-content:center; min-height:78vh">
+    <div class="kicker" data-anim>Pipeline + Embedding 合二为一</div>
+    <h1 class="h-hero" style="font-size:6vw" data-anim>统一缓存池</h1>
+    <p class="lead" style="max-width:50vw" data-anim>
+      4 个预处理阶段 + Embedding 共用一份 LRU 缓存。<br>
+      任一阶段命中 → 同时拿到 canonical + embedding → 下游全部短路。
+    </p>
+    <div class="callout" style="max-width:52vw;margin-top:2vh" data-anim>
+      <div class="q-big">为什么要合并？</div>
+      <p>之前 Pipeline 缓存和 Embedding 缓存各自独立——Pipeline 命中了还要再查一次 Embedding。合并后一次命中 = 全跳过。Embedding 是全程最贵操作 (首次 ~150ms)，统一缓存让它也参与短路。</p>
+    </div>
+    <div style="display:flex;gap:6vw;margin-top:3vh">
+      <div class="stat" data-anim><div class="n" style="font-size:5.5vw">71.5<span style="font-size:.5em">%</span></div><div class="l">命中率</div></div>
+      <div class="stat" data-anim><div class="n" style="font-size:5.5vw">&lt;0.1<span style="font-size:.5em">ms</span></div><div class="l">重复弹幕耗时</div></div>
+    </div>
+  </div>
+  <div class="foot"><div>统一缓存: 4 阶段共享 · input → (canonical, embedding) · 回填策略</div><div>— · —</div></div>
+</section>
+
+<!-- 8. Semantic Clustering -->
+<section class="slide dark">
+  <div class="chrome"><div>聚类 · Clustering</div><div>Act III · 09 / 13</div></div>
+  <div class="frame" style="padding-top:3vh">
+    <div class="kicker" data-anim>在线 + 防漂移 + 周期维护</div>
+    <h2 class="h-xl" data-anim>在线聚类引擎</h2>
+    <p class="lead" style="margin-bottom:2vh" data-anim>Leader-Follower 双阈值实时匹配 → 每 300 条周期维护 (合并 + 拆分) → 热点晋升</p>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:2.5vh 2.5vw">
+      <div class="callout" data-anim>
+        <div class="q-big">双阈值锚点</div>
+        <p>簇心 0.65: 控制聚合范围<br>锚点 0.75: 控制语义纯度<br>锚点不随时间漂移——用 top_examples 的 embedding 做固定参照</p>
+      </div>
+      <div class="callout" data-anim>
+        <div class="q-big">长度惩罚</div>
+        <p>"帅啊"(3字) ≠ "帅啊我看XXX也就那样了"(13字)，ratio≥4.3x → penalty=0.80，拒绝合并。BGE 共享前缀易误判→长度惩罚补偿。</p>
+      </div>
+      <div class="callout" data-anim>
+        <div class="q-big">内部一致性</div>
+        <p>簇内成员与 centroid 平均相似度 < 0.50 → 退化簇拒绝新成员。防止已经杂乱的簇继续吸收不相关内容。</p>
+      </div>
+      <div class="callout" data-anim>
+        <div class="q-big">周期合并</div>
+        <p>两簇 centroid 相似度 > 0.92 → 合并到较大簇。减少碎片化，让同类语义聚合在一起。</p>
+      </div>
+      <div class="callout" data-anim>
+        <div class="q-big">K-Means 拆分</div>
+        <p>内部方差 < 0.50 → k=2 拆分。手写极简 K-Means (~20行)，随机种子 → 分配 → 迭代收敛。</p>
+      </div>
+      <div class="callout" data-anim>
+        <div class="q-big">情感守卫</div>
+        <p>"周杰伦唱得好" vs "周杰伦唱的烂"——共享词 ≥2 且一方含正面词一方含负面词 → 拒绝合并。</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><div>Leader-Follower 实时 · 合并/拆分 300 条周期 · 热点 >100 晋升 · 10min TTL</div><div>— · —</div></div>
+</section>
+
+<!-- 9. Hot Semantics -->
+<section class="slide light">
+  <div class="chrome"><div>热点 · Hot Semantics</div><div>Act III · 10 / 13</div></div>
+  <div class="frame" style="padding-top:4vh">
+    <div class="kicker" data-anim>count > 100 晋升 · 不限数量 · 10min TTL</div>
+    <h2 class="h-xl" data-anim>热点语义机制</h2>
+    <div class="split-55" style="margin-top:4vh">
+      <div class="col" data-anim>
+        <div class="rowline"><div class="k">晋升条件</div><div class="v">常规槽位 count > 100</div></div>
+        <div class="rowline"><div class="k">晋升前操作</div><div class="v">重算 centroid (消除增量漂移) + 选最靠近中心的 top_example 为摘要</div></div>
+        <div class="rowline"><div class="k">数量限制</div><div class="v">无上限，不占用常规 40 槽位</div></div>
+        <div class="rowline"><div class="k">淘汰策略</div><div class="v">10 分钟无更新自动淘汰</div></div>
+        <div class="rowline"><div class="k">独立维护</div><div class="v">更严格合并阈值 (0.94) + 独立拆分 + 情感守卫</div></div>
+      </div>
+      <div class="callout" data-anim>
+        <div class="q-big">为什么需要热点语义？</div>
+        <p>常规 40 槽位 LRU 淘汰——热门话题可能被新话题挤出。热点区独立存储，保证高频语义不被冲走。</p>
+        <p style="margin-top:2vh">10min 无更新自动淘汰——直播话题有生命周期，老热点过期自动释放，不再占用资源。</p>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><div>晋升前 centroid 重算 → 选中心文本为摘要 → 独立合并/拆分 → 情感守卫 → 10min TTL</div><div>— · —</div></div>
+</section>
+
+<!-- 10. BGE Fine-tuning -->
+<section class="slide dark">
+  <div class="chrome"><div>微调 · Fine-tuning</div><div>Act IV · 11 / 13</div></div>
+  <div class="frame" style="padding-top:3vh">
+    <div class="kicker" data-anim>域适配 · 有监督对比学习</div>
+    <h2 class="h-xl" data-anim>BGE 微调</h2>
+    <div style="display:grid;grid-template-columns:55fr 45fr;gap:4vw;margin-top:3vh">
+      <div data-anim>
+        <div class="callout">
+          <div class="q-big">方法</div>
+          <p>variants.yaml 已有的 109 对 (变体, 规范词) 做正样本对。<br>MultipleNegativesRankingLoss: 同一对的变体和规范词在 embedding 空间靠近，和其他对远离。<br>RTX 4080 SUPER · 39 秒 · 10 epochs。</p>
+        </div>
+        <div class="rowline" style="margin-top:2vh"><div class="k">数据来源</div><div class="v">variants.yaml (已有，零额外成本)</div><div class="m">109 对</div></div>
+        <div class="rowline"><div class="k">模型</div><div class="v">bge-small-zh-v1.5 (24M 参数, 100MB)</div></div>
+        <div class="rowline"><div class="k">保存</div><div class="v">models/bge-small-zh-v1.5-ft/ (原始不动)</div></div>
+        <div class="rowline"><div class="k">切换</div><div class="v">config 一行 ft_model_path 切换/撤回</div></div>
+      </div>
+      <div data-anim>
+        <p class="lead" style="margin-bottom:2vh">效果对比</p>
+        <div class="rowline"><div class="k"> ***（主播名字）↔主播</div><div class="v">0.26 → 0.42</div><div class="m">+63%</div></div>
+        <div class="rowline"><div class="k">yyds↔永远的神</div><div class="v">0.37 → 0.45</div><div class="m">+23%</div></div>
+        <div class="rowline"><div class="k">sb↔傻逼</div><div class="v">0.54 → 0.61</div><div class="m">+11%</div></div>
+        <div class="rowline"><div class="k">南亭↔难听</div><div class="v">0.24 → 0.28</div><div class="m">+18%</div></div>
+        <div class="callout" style="margin-top:2vh">
+          <div class="q-big">关键</div><p>近义词基本不变 (冲啊↔加油 -0.01)；无关对未漂移 (好听↔傻逼 +0.004)。全参数微调 39 秒完成。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><div>有监督对比学习 · 109 对变体正样本 · 39s · +63% 变体相似度 · 近义词无损</div><div>— · —</div></div>
+</section>
+
+<!-- 11. Web UI -->
+<section class="slide hero light">
+  <div class="chrome"><div>监控 · Monitor</div><div>Act IV · 12 / 13</div></div>
+  <div class="frame" style="display:grid; gap:3vh; align-content:center; min-height:78vh">
+    <div class="kicker" data-anim>SSE 实时推送 &lt;5ms 延迟</div>
+    <h1 class="h-hero" style="font-size:5.8vw" data-anim>Web 实时监控面板</h1>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:2.5vh 3vw;margin-top:3vh">
+      <div class="pillar" data-anim><div class="t">📥 原始弹幕列</div><div class="d">实时弹幕流，标注缓存命中环节<br>(清洗/同义词替换/变体归一/循环节压缩)</div></div>
+      <div class="pillar" data-anim><div class="t">🔄 预处理后列</div><div class="d">归一化后文本 + 归一化标签<br>变化标记: 变体→规范词的映射过程</div></div>
+      <div class="pillar" data-anim><div class="t">🧠 语义聚类栅格</div><div class="d">40 槽位网格卡片<br>蓝色标题=规范文本，紫色标签=原始弹幕</div></div>
+      <div class="pillar" data-anim><div class="t">🏛️ 热点语义栏</div><div class="d">count>100 的热点独立横向展示<br>10min TTL 自动消失</div></div>
+      <div class="pillar" data-anim><div class="t">⚙ 实时调节</div><div class="d">簇心/锚点阈值文本框+应用按钮<br>卡片宽度滑块 160-500px</div></div>
+      <div class="pillar" data-anim><div class="t">📊 统计顶栏</div><div class="d">摄入量/去重数/聚类数<br>统一缓存命中率/逐环节耗时</div></div>
+    </div>
+    <p class="lead" style="margin-top:3vh" data-anim>EventSource 长连接 · ingest → JSON → broadcast_sse → 浏览器即时渲染</p>
+  </div>
+  <div class="foot"><div>SSE 替换轮询 · 3 列实时面板 · 阈值调节 · 内容穿透 · 缓存/耗时统计</div><div>— · —</div></div>
+</section>
+
+<!-- 12. Summary -->
+<section class="slide dark">
+  <div class="chrome"><div>总结 · Summary</div><div>Act IV · 13 / 13</div></div>
+  <div class="frame" style="display:grid; gap:2.8vh; align-content:center; min-height:80vh">
+    <div class="kicker" data-anim>Takeaway</div>
+    <h2 class="h-xl" data-anim>关键设计决策</h2>
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:1.6vh 4vw;margin-top:3vh">
+      <div data-anim><div class="callout"><div class="q-big">预处理管线化</div><p>6 步各司其职 · jieba 分词联动 variants · 声调拼音防误匹配 · O(n) 全程</p></div></div>
+      <div data-anim><div class="callout"><div class="q-big">统一缓存池</div><p>Pipeline + Embedding 合二为一 · 命中即全短路 · 回填策略 · 71.5% 命中率</p></div></div>
+      <div data-anim><div class="callout"><div class="q-big">在线聚类</div><p>Leader-Follower 实时 · 周期合并/拆分 · 热点晋升 · 情感守卫 · 内容穿透</p></div></div>
+      <div data-anim><div class="callout"><div class="q-big">BGE 域适配微调</div><p>109 对变体正样本 · 有监督对比学习 · 39s · +63% 变体相似度 · 近义词无损</p></div></div>
+    </div>
+    <div class="callout" style="margin-top:2vh" data-anim>
+      <div class="q-big">适合什么场景</div>
+      <p>直播间弹幕分析 · 舆情实时监控 · 评论区聚合 · 任何高冗余短文本的流式语义聚类任务。<br>纯 Python · CPU 优先 · 单机部署 · 200 msg/s 吞吐。</p>
+    </div>
+  </div>
+  <div class="foot"><div>弹幕实时语义聚类系统 · v4.2 · guizang-ppt-skill · 墨水经典主题</div><div>— 2026 —</div></div>
+</section>
+
+
+</div>
+
+<div id="nav"></div>
+
+<script>
+/* =============== WebGL 双背景 ===============
+   深色页：Holographic Dispersion（全息色散 · 钛金暗流）—— 彩虹微扰、鼠标径向涟漪
+   浅色页：Spiral Vortex（旋转涡流 · 银色珍珠）—— domain-warp 流动、无中心
+   修改风格请参考 references/webgl-backgrounds.md
+*/
+const VS = `attribute vec2 position;void main(){gl_Position=vec4(position,0.0,1.0);}`;
+
+const FS_DARK = `precision highp float;
+uniform vec2 u_resolution;uniform float u_time;uniform vec2 u_mouse;
+vec3 palette(float t,vec3 a,vec3 b,vec3 c,vec3 d){return a+b*cos(6.28318*(c*t+d));}
+void main(){
+  vec2 uv=gl_FragCoord.xy/u_resolution.xy;
+  vec2 p=uv*2.0-1.0;p.x*=u_resolution.x/u_resolution.y;
+  vec2 m=u_mouse*2.0-1.0;m.x*=u_resolution.x/u_resolution.y;
+  float md=length(p-m);
+  float mr=sin(md*15.0-u_time*4.0)*exp(-md*3.0);p+=mr*0.08;
+  vec2 p0=p;
+  for(float i=1.0;i<4.0;i++){
+    p.x+=0.1/i*sin(i*3.0*p.y+u_time*0.4)+0.05;
+    p.y+=0.1/i*cos(i*2.0*p.x+u_time*0.3)-0.05;
+  }
+  float r=length(p);float ang=atan(p.y,p.x);
+  vec3 a=vec3(0.12,0.12,0.13);
+  vec3 b=vec3(0.03,0.04,0.05);
+  vec3 c=vec3(1.0,1.0,1.0);
+  vec3 d=vec3(0.1,0.2,0.4);
+  vec3 col=palette(r*1.5+p0.x*0.5+u_time*0.1,a,b,c,d);
+  float disp=sin(r*25.0-u_time*1.5+ang*2.0)*0.5+0.5;
+  col+=vec3(disp*0.015,disp*0.01,disp*0.02);
+  float hi=pow(sin(p.x*4.0+p.y*3.0+u_time)*0.5+0.5,8.0);
+  col+=hi*0.08;
+  vec3 base=vec3(0.05,0.05,0.06);
+  col=mix(base,col,0.85);
+  gl_FragColor=vec4(col,1.0);
+}`;
+
+const FS_LIGHT = `precision highp float;
+uniform vec2 u_resolution;uniform float u_time;uniform vec2 u_mouse;
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float noise(vec2 p){
+  vec2 i=floor(p),f=fract(p);
+  float a=hash(i),b=hash(i+vec2(1,0));
+  float c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));
+  vec2 u=f*f*(3.0-2.0*f);
+  return mix(a,b,u.x)+(c-a)*u.y*(1.0-u.x)+(d-b)*u.x*u.y;
+}
+float fbm(vec2 p){
+  float v=0.0,a=0.5;
+  mat2 m=mat2(0.80,0.60,-0.60,0.80);
+  for(int i=0;i<5;i++){v+=a*noise(p);p=m*p*2.02;a*=0.5;}
+  return v;
+}
+void main(){
+  vec2 uv=gl_FragCoord.xy/u_resolution.xy;
+  vec2 p=uv;p.x*=u_resolution.x/u_resolution.y;
+  vec2 m=u_mouse;m.x*=u_resolution.x/u_resolution.y;
+  vec2 md=p-m;float dl=length(md);
+  p+=normalize(md+vec2(0.0001))*exp(-dl*5.0)*0.03;
+  vec2 q=vec2(fbm(p*1.8+u_time*0.07),fbm(p*1.8+vec2(5.2,1.3)+u_time*0.06));
+  vec2 r=vec2(fbm(p*2.0+q*1.3+vec2(1.7,9.2)+u_time*0.05),
+              fbm(p*2.0+q*1.3+vec2(8.3,2.8)+u_time*0.04));
+  float f=fbm(p*2.2+r*1.5);
+  vec3 silverDark=vec3(0.86,0.85,0.84);
+  vec3 paper=vec3(0.955,0.945,0.925);
+  vec3 col=mix(silverDark,paper,f);
+  float ph=r.x*2.2+u_time*0.35;
+  col+=vec3(0.78,0.62,0.92)*sin(ph)*0.055;
+  col+=vec3(0.55,0.72,0.95)*sin(ph*0.8+2.0)*0.05;
+  float hl=smoothstep(0.48,0.92,f);
+  col+=hl*0.06;
+  gl_FragColor=vec4(col,1.0);
+}`;
+
+const mouse={x:0.5,y:0.5};
+addEventListener('mousemove',e=>{mouse.x=e.clientX/innerWidth;mouse.y=e.clientY/innerHeight});
+
+function bootGL(canvasId, fsSrc){
+  const canvas=document.getElementById(canvasId);
+  const gl=canvas.getContext('webgl',{alpha:false,antialias:true});
+  if(!gl) return ()=>false;
+  const mk=(t,s)=>{const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);return sh};
+  const prog=gl.createProgram();
+  gl.attachShader(prog,mk(gl.VERTEX_SHADER,VS));
+  gl.attachShader(prog,mk(gl.FRAGMENT_SHADER,fsSrc));
+  gl.linkProgram(prog);gl.useProgram(prog);
+  const buf=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  const pos=gl.getAttribLocation(prog,'position');
+  gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+  const lRes=gl.getUniformLocation(prog,'u_resolution');
+  const lT=gl.getUniformLocation(prog,'u_time');
+  const lM=gl.getUniformLocation(prog,'u_mouse');
+  const resize=()=>{
+    const d=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=innerWidth*d;canvas.height=innerHeight*d;
+    gl.viewport(0,0,canvas.width,canvas.height);
+  };
+  addEventListener('resize',resize);resize();
+  return (tSec)=>{
+    gl.uniform2f(lRes,canvas.width,canvas.height);
+    gl.uniform1f(lT,tSec);
+    gl.uniform2f(lM,mouse.x,1-mouse.y);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+    return true;
+  };
+}
+let drawDark=null, drawLight=null, glRAF=0, glT0=Date.now();
+function startGL(){
+  if(window.__lowPowerMode || glRAF) return;
+  if(!drawDark) drawDark=bootGL('bg-dark',FS_DARK);
+  if(!drawLight) drawLight=bootGL('bg-light',FS_LIGHT);
+  glT0=Date.now();
+  function loop(){
+    if(window.__lowPowerMode){glRAF=0;return;}
+    const t=(Date.now()-glT0)/1000;
+    drawDark(t);drawLight(t);
+    glRAF=requestAnimationFrame(loop);
+  }
+  glRAF=requestAnimationFrame(loop);
+}
+function stopGL(){
+  if(glRAF) cancelAnimationFrame(glRAF);
+  glRAF=0;
+}
+startGL();
+addEventListener('ppt-low-power-change', e=>{e.detail.on ? stopGL() : startGL();});
+
+// =============== 导航（翻页 / 圆点 / 键盘 / 滚轮 / 触屏） ===============
+const deck=document.getElementById('deck');
+const slides=deck.querySelectorAll('.slide');
+const nav=document.getElementById('nav');
+let idx=0,total=slides.length,lock=false;
+
+// 关键：矫正 deck 宽度为 total * 100vw，否则翻页会错位
+deck.style.width=(total*100)+'vw';
+
+slides.forEach((s,i)=>{
+  const b=document.createElement('button');
+  b.className='dot';b.dataset.i=i;b.setAttribute('aria-label','Page '+(i+1));
+  b.onclick=()=>go(i);
+  nav.appendChild(b);
+});
+
+function go(n){
+  if(lock)return;
+  idx=Math.max(0,Math.min(total-1,n));
+  window.__currentSlideIndex = idx;
+  deck.style.transform=`translateX(${-idx*100}vw)`;
+  nav.querySelectorAll('.dot').forEach((d,i)=>d.classList.toggle('active',i===idx));
+  /* 主题切换：优先读 data-theme，其次从 class（light/dark）推断 */
+  const el=slides[idx];
+  const th=el.dataset.theme || (el.classList.contains('light')?'light':(el.classList.contains('dark')?'dark':'dark'));
+  document.body.classList.toggle('light-bg',th==='light');
+  /* 动效：翻页过渡中段触发当前页的入场动画（由 motion-boot 注册） */
+  if(window.__playSlide) setTimeout(()=>window.__playSlide(idx), 450);
+  lock=true;setTimeout(()=>lock=false,700);
+}
+
+/* =============== ESC 索引视图 =============== */
+let overviewOn=false;
+const ov=document.createElement('div');
+ov.id='overview';
+ov.style.cssText='position:fixed;inset:0;z-index:100;background:rgba(var(--ink-rgb),.92);backdrop-filter:blur(12px);display:none;overflow-y:auto;padding:4vh 4vw';
+document.body.appendChild(ov);
+
+function buildOverview(){
+  ov.innerHTML='';
+  const grid=document.createElement('div');
+  grid.style.cssText='display:grid;grid-template-columns:repeat(4,1fr);gap:2vh 1.6vw;max-width:90vw;margin:0 auto';
+  slides.forEach((s,i)=>{
+    const card=document.createElement('div');
+    card.style.cssText='cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid '+(i===idx?'rgba(var(--paper-rgb),.8)':'rgba(var(--paper-rgb),.15)')+';transition:border-color .2s';
+    card.onmouseenter=()=>card.style.borderColor='rgba(var(--paper-rgb),.6)';
+    card.onmouseleave=()=>card.style.borderColor=i===idx?'rgba(var(--paper-rgb),.8)':'rgba(var(--paper-rgb),.15)';
+    const wrap=document.createElement('div');
+    wrap.style.cssText='width:100%;aspect-ratio:16/9;overflow:hidden;position:relative;pointer-events:none;background:'+(s.classList.contains('light')?'var(--paper)':'var(--ink)');
+    const clone=s.cloneNode(true);
+    clone.style.cssText='width:100vw;height:100vh;transform:scale('+(1/4.5)+');transform-origin:top left;position:absolute;top:0;left:0;pointer-events:none';
+    wrap.appendChild(clone);
+    const label=document.createElement('div');
+    label.style.cssText='padding:6px 10px;font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--paper);opacity:.7';
+    label.textContent=(i+1)+' / '+total;
+    card.appendChild(wrap);
+    card.appendChild(label);
+    card.onclick=()=>{toggleOverview();go(i)};
+    grid.appendChild(card);
+  });
+  ov.appendChild(grid);
+}
+
+function toggleOverview(){
+  overviewOn=!overviewOn;
+  if(overviewOn){buildOverview();ov.style.display='block';}
+  else{ov.style.display='none';}
+}
+
+addEventListener('keydown',e=>{
+  if(e.key==='Escape'){e.preventDefault();toggleOverview();return;}
+  if(e.key && e.key.toLowerCase()==='b' && !e.metaKey && !e.ctrlKey && !e.altKey){
+    e.preventDefault();
+    window.__setLowPowerMode(!window.__lowPowerMode);
+    return;
+  }
+  if(overviewOn)return;
+  if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '||e.key==='ArrowDown'){
+    if(window.__pipeAdvance && window.__pipeAdvance()) return;
+    go(idx+1);
+    return;
+  }
+  if(e.key==='ArrowLeft'||e.key==='PageUp'||e.key==='ArrowUp')go(idx-1);
+  if(e.key==='Home')go(0);
+  if(e.key==='End')go(total-1);
+});
+
+let wheelTO=null,wheelAcc=0;
+addEventListener('wheel',e=>{
+  wheelAcc+=e.deltaY+e.deltaX;
+  if(Math.abs(wheelAcc)>50){
+    if(wheelAcc>0 && window.__pipeAdvance && window.__pipeAdvance()){
+      wheelAcc=0;
+    }else{
+      go(idx+(wheelAcc>0?1:-1));wheelAcc=0;
+    }
+  }
+  clearTimeout(wheelTO);wheelTO=setTimeout(()=>wheelAcc=0,150);
+},{passive:true});
+
+let tx=0,ty=0;
+addEventListener('touchstart',e=>{tx=e.touches[0].clientX;ty=e.touches[0].clientY},{passive:true});
+addEventListener('touchend',e=>{
+  const dx=(e.changedTouches[0].clientX-tx);
+  const dy=(e.changedTouches[0].clientY-ty);
+  if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)){
+    if(dx<0 && window.__pipeAdvance && window.__pipeAdvance()) return;
+    go(idx+(dx<0?1:-1));
+  }
+},{passive:true});
+
+go(0);
+</script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script>lucide.createIcons();</script>
+
+<!-- ============ Motion One 动效引擎（本地优先,CDN 兜底） ============
+     加载策略:先 ./assets/motion.min.js(本地,离线可用),失败 fallback 到 jsDelivr CDN
+     加载完成后挂 window.__playSlide / window.__pipeAdvance,
+     导航脚本会在翻页中段调用 __playSlide(idx),键盘/滚轮/触屏会在翻页前调用 __pipeAdvance()
+     双双失败时会兜底把所有 [data-anim] 设为可见,不让动效破坏阅读
+-->
+<script type="module">
+let motion;
+try {
+  motion = await import('./assets/motion.min.js');
+} catch(e1) {
+  try {
+    motion = await import('https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm');
+  } catch(e2) {
+    console.warn('[motion] local + CDN both failed, disabling animations', e1, e2);
+    document.querySelectorAll('[data-anim]').forEach(el=>{el.style.opacity='1';el.style.transform='none'});
+    document.querySelectorAll('[data-animate="pipeline"] [data-anim]').forEach(el=>el.style.opacity='1');
+  }
+}
+
+if(motion){
+  const { animate, stagger } = motion;
+  document.body.classList.add('motion-ready');
+  const EASE = [.22, 1, .36, 1];
+  const slides = [...document.querySelectorAll('.slide')];
+  let pipeStep = -1;
+  let lastIdx = -1;
+
+  function resetAnims(slide){
+    slide.querySelectorAll('[data-anim]').forEach(el=>{
+      el.style.opacity='';
+      el.style.transform='';
+    });
+  }
+
+  function revealStatic(slide){
+    resetAnims(slide);
+    document.getAnimations?.().forEach(a=>a.cancel());
+    slide.querySelectorAll('[data-anim]').forEach(el=>{
+      el.style.opacity='1';
+      el.style.transform='none';
+    });
+  }
+
+  function playSlide(i){
+    const slide = slides[i];
+    if(!slide) return;
+    lastIdx = i;
+    const recipe = slide.dataset.animate || (slide.classList.contains('hero') ? 'hero' : 'cascade');
+
+    if(window.__lowPowerMode){
+      revealStatic(slide);
+      return;
+    }
+
+    if(recipe === 'pipeline'){
+      pipeStep = -1;
+      slide.querySelectorAll('[data-anim]').forEach(el=>{
+        el.style.opacity='0.15';
+        el.style.transform='none';
+      });
+      return;
+    }
+
+    resetAnims(slide);
+    const all = [...slide.querySelectorAll('[data-anim]')];
+    if(!all.length) return;
+
+    if(recipe === 'directional'){
+      const lefts  = all.filter(el=>el.dataset.anim==='left');
+      const divs   = all.filter(el=>el.dataset.anim==='divider');
+      const rights = all.filter(el=>el.dataset.anim==='right');
+      const others = all.filter(el=>!['left','right','divider'].includes(el.dataset.anim));
+      if(others.length) animate(others, {opacity:[0,1], y:[12,0]}, {duration:.6, delay:stagger(.1, {start:.15}), easing:EASE});
+      if(lefts.length)  animate(lefts,  {opacity:[0,1], x:[-24,0]}, {duration:.8, delay:.35, easing:EASE});
+      if(divs.length)   animate(divs,   {opacity:[0,.25]},          {duration:.5, delay:.9});
+      if(rights.length) animate(rights, {opacity:[0,1], x:[24,0]},  {duration:.8, delay:1.0, easing:EASE});
+      return;
+    }
+
+    if(recipe === 'quote'){
+      const lines = all.filter(el=>el.dataset.anim==='line');
+      const others = all.filter(el=>el.dataset.anim!=='line');
+      if(others.length) animate(others, {opacity:[0,1], y:[8,0]},    {duration:.6, delay:stagger(.12, {start:.2}), easing:EASE});
+      if(lines.length)  animate(lines,  {opacity:[.35,1], y:[10,0]}, {duration:.8, delay:stagger(.55, {start:.5}), easing:EASE});
+      return;
+    }
+
+    if(recipe === 'hero'){
+      animate(all, {opacity:[0,1], y:[14,0]}, {duration:.9, delay:stagger(.16, {start:.2}), easing:EASE});
+      return;
+    }
+
+    // default: cascade
+    animate(all, {opacity:[0,1], y:[16,0]}, {duration:.75, delay:stagger(.1, {start:.15}), easing:EASE});
+  }
+
+  function pipeAdvance(){
+    if(window.__lowPowerMode) return false;
+    const slide = slides[lastIdx];
+    if(!slide || slide.dataset.animate !== 'pipeline') return false;
+    const steps  = [...slide.querySelectorAll('[data-anim="step"]')];
+    const arrows = [...slide.querySelectorAll('[data-anim="arrow"]')];
+    if(pipeStep >= steps.length - 1) return false;
+    pipeStep++;
+    animate(steps[pipeStep], {opacity:[0.15,1], y:[8,0]}, {duration:.5, easing:EASE});
+    if(pipeStep > 0 && arrows[pipeStep-1]){
+      animate(arrows[pipeStep-1], {opacity:[0.15,.7]}, {duration:.3, delay:.15});
+    }
+    return true;
+  }
+
+  window.__playSlide = playSlide;
+  window.__pipeAdvance = pipeAdvance;
+
+  // 首屏:go(0) 已跑过(同步),没来得及触发动效 → 这里补一下
+  playSlide(0);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram name="Architecture">
+    <mxGraphModel dx="1600" dy="900">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Layer labels (left side) -->
+        <mxCell id="l0" value="数据采集" style="text;html=1;fontSize=12;fontColor=#6c8ebf;fontStyle=1;align=right;" vertex="1" parent="1"><mxGeometry x="20" y="115" width="80" height="24" as="geometry"/></mxCell>
+        <mxCell id="l1" value="网络层" style="text;html=1;fontSize=12;fontColor=#d6b656;fontStyle=1;align=right;" vertex="1" parent="1"><mxGeometry x="20" y="310" width="80" height="24" as="geometry"/></mxCell>
+        <mxCell id="l2" value="预处理+缓存" style="text;html=1;fontSize=12;fontColor=#82b366;fontStyle=1;align=right;" vertex="1" parent="1"><mxGeometry x="20" y="510" width="100" height="24" as="geometry"/></mxCell>
+        <mxCell id="l3" value="语义计算" style="text;html=1;fontSize=12;fontColor=#d79b00;fontStyle=1;align=right;" vertex="1" parent="1"><mxGeometry x="20" y="710" width="80" height="24" as="geometry"/></mxCell>
+        <mxCell id="l4" value="展示层" style="text;html=1;fontSize=12;fontColor=#9673a6;fontStyle=1;align=right;" vertex="1" parent="1"><mxGeometry x="20" y="910" width="80" height="24" as="geometry"/></mxCell>
+
+        <!-- Layer separator lines -->
+        <mxCell id="sep1" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#CCCCCC;" edge="1" parent="1"><mxGeometry width="50" height="50" relative="1" as="geometry"><mxPoint x="30" y="280" as="sourcePoint"/><mxPoint x="1180" y="280" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="sep2" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#CCCCCC;" edge="1" parent="1"><mxGeometry width="50" height="50" relative="1" as="geometry"><mxPoint x="30" y="480" as="sourcePoint"/><mxPoint x="1180" y="480" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="sep3" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#CCCCCC;" edge="1" parent="1"><mxGeometry width="50" height="50" relative="1" as="geometry"><mxPoint x="30" y="680" as="sourcePoint"/><mxPoint x="1180" y="680" as="targetPoint"/></mxGeometry></mxCell>
+        <mxCell id="sep4" value="" style="endArrow=none;dashed=1;html=1;strokeColor=#CCCCCC;" edge="1" parent="1"><mxGeometry width="50" height="50" relative="1" as="geometry"><mxPoint x="30" y="880" as="sourcePoint"/><mxPoint x="1180" y="880" as="targetPoint"/></mxGeometry></mxCell>
+
+        <!-- Row 1: Data Sources -->
+        <mxCell id="csv" value="CSV 弹幕发送端&#xa;44k 条 · 倍速回放 1-60x" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=0;" vertex="1" parent="1"><mxGeometry x="150" y="85" width="210" height="80" as="geometry"/></mxCell>
+        <mxCell id="manual" value="手动输入&#xa;Web 发送框" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=0;" vertex="1" parent="1"><mxGeometry x="150" y="185" width="210" height="55" as="geometry"/></mxCell>
+
+        <!-- Row 2: HTTP Server -->
+        <mxCell id="http" value="MiniHttpServer · asyncio" style="swimlane;startSize=30;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;" vertex="1" parent="1"><mxGeometry x="420" y="85" width="200" height="170" as="geometry"/></mxCell>
+        <mxCell id="ingest" value="POST /ingest" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;" vertex="1" parent="http"><mxGeometry x="40" y="45" width="120" height="40" as="geometry"/></mxCell>
+        <mxCell id="ssep" value="SSE /events 推送" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;" vertex="1" parent="http"><mxGeometry x="40" y="105" width="120" height="40" as="geometry"/></mxCell>
+
+        <!-- Row 3: Pipeline -->
+        <mxCell id="pipeline" value="CanonicalRegistry · 6步预处理管线" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;" vertex="1" parent="1"><mxGeometry x="150" y="305" width="1030" height="155" as="geometry"/></mxCell>
+        <mxCell id="s1" value="① 基础清洗&#xa;NFKC归一化" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e8f5e9;strokeColor=#82b366;" vertex="1" parent="pipeline"><mxGeometry x="20" y="45" width="130" height="55" as="geometry"/></mxCell>
+        <mxCell id="s2" value="② jieba分词+别名&#xa;variants联动" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e8f5e9;strokeColor=#82b366;" vertex="1" parent="pipeline"><mxGeometry x="170" y="45" width="130" height="55" as="geometry"/></mxCell>
+        <mxCell id="s3" value="③ 变体归一化&#xa;字典+自动拼音" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e8f5e9;strokeColor=#82b366;" vertex="1" parent="pipeline"><mxGeometry x="320" y="45" width="130" height="55" as="geometry"/></mxCell>
+        <mxCell id="s4" value="④ 循环压缩&#xa;regex" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e8f5e9;strokeColor=#82b366;" vertex="1" parent="pipeline"><mxGeometry x="470" y="45" width="115" height="55" as="geometry"/></mxCell>
+        <mxCell id="s5" value="⑤ SimHash&#xa;辅助模糊" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e8f5e9;strokeColor=#82b366;" vertex="1" parent="pipeline"><mxGeometry x="605" y="45" width="115" height="55" as="geometry"/></mxCell>
+        <mxCell id="s6" value="⑥ 精确去重&#xa;DedupStore" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e8f5e9;strokeColor=#82b366;" vertex="1" parent="pipeline"><mxGeometry x="740" y="45" width="120" height="55" as="geometry"/></mxCell>
+        <mxCell id="cache" value="统一缓存池&#xa;(canonical, embedding)&#xa;命中 → 短路全部下游" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="pipeline"><mxGeometry x="280" y="110" width="420" height="35" as="geometry"/></mxCell>
+
+        <!-- Step arrows -->
+        <mxCell id="es1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="pipeline" source="s1" target="s2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="pipeline" source="s2" target="s3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="pipeline" source="s3" target="s4"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="pipeline" source="s4" target="s5"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="pipeline" source="s5" target="s6"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ec1" value="查缓存" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.25;entryY=0;fontSize=10;dashed=1;" edge="1" parent="pipeline" source="s3" target="cache"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="ec2" value="命中短路" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.75;exitY=1;entryX=0.75;entryY=0;fontSize=10;strokeColor=#9673a6;" edge="1" parent="pipeline" source="s3" target="cache"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- Row 4: BGE + Clustering -->
+        <mxCell id="bge" value="BGE Embedding&#xa;bge-small-zh-v1.5 · 512d&#xa;有监督微调 (109对变体)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=13;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="150" y="690" width="250" height="85" as="geometry"/></mxCell>
+
+        <mxCell id="cluster" value="在线聚类引擎" style="swimlane;startSize=30;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;" vertex="1" parent="1"><mxGeometry x="470" y="680" width="710" height="105" as="geometry"/></mxCell>
+        <mxCell id="lf" value="Leader-Follower&#xa;双阈值+锚点反漂移+长度惩罚" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff0f0;strokeColor=#b85450;" vertex="1" parent="cluster"><mxGeometry x="15" y="42" width="195" height="50" as="geometry"/></mxCell>
+        <mxCell id="maint" value="周期维护 · 每300条&#xa;合并(>0.92) + K-Means拆分(k=2)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff0f0;strokeColor=#b85450;" vertex="1" parent="cluster"><mxGeometry x="225" y="42" width="225" height="50" as="geometry"/></mxCell>
+        <mxCell id="hot" value="热点语义 · >100晋升&#xa;不限数量 · 10min TTL · 情感守卫" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff0f0;strokeColor=#b85450;" vertex="1" parent="cluster"><mxGeometry x="465" y="42" width="225" height="50" as="geometry"/></mxCell>
+
+        <!-- Row 5: Web UI -->
+        <mxCell id="web" value="Web 实时监控面板&#xa;SSE 3列实时 · 阈值调节 · 热点栏 · 缓存/耗时统计" style="rounded=1;whiteSpace=wrap;html=1;fontSize=14;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="450" y="890" width="420" height="70" as="geometry"/></mxCell>
+
+        <!-- Vertical arrows between rows -->
+        <mxCell id="v1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;flowAnimation=1;" edge="1" parent="1" source="csv" target="http"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="v2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.3;entryY=0;flowAnimation=1;" edge="1" parent="1" source="http" target="pipeline"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="v3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.3;exitY=1;entryX=0.5;entryY=0;flowAnimation=1;" edge="1" parent="1" source="pipeline" target="bge"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="v4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;flowAnimation=1;" edge="1" parent="1" source="bge" target="cluster"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="v5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;flowAnimation=1;" edge="1" parent="1" source="cluster" target="web"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <!-- SSE direct line (dashed) -->
+        <mxCell id="sse" value="SSE 实时推送 &lt;5ms" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=11;strokeColor=#d79b00;dashed=1;exitX=0.25;exitY=1;entryX=0.25;entryY=0;" edge="1" parent="1" source="http" target="web"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="470" y="500"/><mxPoint x="70" y="500"/><mxPoint x="70" y="925"/></Array></mxGeometry></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
