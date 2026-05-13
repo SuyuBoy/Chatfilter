@@ -67,7 +67,8 @@ class CanonicalRegistry:
             min_text_length=settings.preprocess.simhash_min_text_length,
         )
         self.dedup_store = DedupStore()
-        self.cache = UnifiedCache()      # 统一缓存池
+        emb_cfg = settings.embedding
+        self.cache = UnifiedCache(max_size=emb_cfg.cache_max_size, ttl=emb_cfg.cache_ttl)
         self.timer = PipelineTimer()     # 逐环节计时器
 
         # 统计计数
