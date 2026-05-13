@@ -10,17 +10,11 @@ env.backends.onnx.wasm.wasmPaths = (import.meta as any).env?.DEV
   : './assets/';
 
 // Load model from local files (not HuggingFace)
-const DEV = (import.meta as any).env?.DEV;
+// Models are served alongside the page: ./models/Xenova/bge-small-zh-v1.5/
+const pageDir = window.location.href.replace(/\/[^/]*$/, '');
 env.allowLocalModels = true;
-if (DEV) {
-  // In dev, model files are in public/models/
-  env.remoteHost = window.location.origin;
-  env.remotePathTemplate = 'models/{model}/';
-} else {
-  // In production, model files are alongside the page
-  env.remoteHost = window.location.origin;
-  env.remotePathTemplate = 'models/{model}/';
-}
+env.remoteHost = pageDir;
+env.remotePathTemplate = 'models/{model}/';
 
 // ═══════════════════════════════════════════════
 //  1. 预处理 (preprocess)
