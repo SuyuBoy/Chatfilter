@@ -10,8 +10,7 @@ import os
 from pathlib import Path
 
 from src.engine.preprocessor import basic_cleanse
-from src.engine.alias_normalizer import AliasNormalizer
-from src.engine.variant_normalizer import VariantNormalizer
+from src.engine.normalizer import Normalizer
 from src.engine.cycle_compressor import compress_cycle
 from src.engine.simhash_dedup import SimHashHelper
 from src.engine.dedup_store import DedupStore
@@ -20,8 +19,7 @@ from config.settings import get_settings
 
 # ── 加载配置 ──
 settings = get_settings()
-alias_norm = AliasNormalizer(settings.preprocess.aliases_path)
-variant_norm = VariantNormalizer(settings.preprocess.variants_path)
+normalizer = Normalizer(settings.preprocess.variants_path)
 simhash = SimHashHelper(
     high_conf_distance=settings.preprocess.simhash_high_conf_distance,
     candidate_distance=settings.preprocess.simhash_candidate_distance,
@@ -64,8 +62,8 @@ raw_messages = load_csv(str(CSV_PATH))
 
 STEP_NAMES = [
     "① 基础清洗 (basic_cleanse)",
-    "② 别名归一化 (alias_normalizer)",
-    "③ 变体归一化 (variant_normalizer)",
+    "② 统一归一化 (normalizer)",
+    "③ 循环节压缩 (cycle_compressor)",
     "④ 循环节压缩 (cycle_compressor)",
     "⑤ SimHash 辅助模糊 (simhash_dedup)",
     "⑥ 精确去重+计数 (dedup_store)",
@@ -134,22 +132,22 @@ def main():
                 print(f"    {r['original'][:30]!r} → {r['message'][:30]!r}")
                 shown += 1
 
-    # ── 步骤 2: 别名归一化 ──
+    # ── 步骤 2: 归一化 (alias + variant 合并) ──
     if not wait_step(1, STEP_NAMES[1]):
         return
 
     step2_rows = []
-    alias_hits = 0
+    hits = 0
     for r in kept:
-        result = alias_norm.normalize(r["message"])
+        result = normalizer.normalize(r["message"])
         if result != r["message"]:
-            alias_hits += 1
+            hits += 1
         step2_rows.append({"message": result, "date": r["date"], "timestamp": r["timestamp"],
                            "before": r["message"]})
 
-    save_csv("step2_alias.csv", step2_rows, ["message", "date", "timestamp", "before"])
-    print(f"\n  别名命中: {alias_hits} 条")
-    if alias_hits:
+    save_csv("step2_normalized.csv", step2_rows, ["message", "date", "timestamp", "before"])
+    print(f"\n  归一化命中: {hits} 条")
+    if hits:
         print(f"  替换示例 (前10):")
         shown = 0
         for r in step2_rows:
@@ -157,14 +155,14 @@ def main():
                 print(f"    {r['before'][:35]!r} → {r['message'][:35]!r}")
                 shown += 1
 
-    # ── 步骤 3: 变体归一化 ──
+    # ── 步骤 3: 循环节压缩 ──
     if not wait_step(2, STEP_NAMES[2]):
         return
 
     step3_rows = []
     variant_hits = 0
     for r in step2_rows:
-        result = variant_norm.normalize(r["message"])
+        result = compress_cycle(r["message"])
         if result != r["message"]:
             variant_hits += 1
         step3_rows.append({"message": result, "date": r["date"], "timestamp": r["timestamp"],

@@ -1,9 +1,7 @@
 """
 注册表模式: CanonicalRegistry — 三层归一引擎 + 单表缓存 + 计时。
 
-管线缓存策略:
-  每步产出的文本 hash 查单表 UnifiedCache → 命中即短路。
-  全流程跑完后写入所有中间文本 hash → canonical 的 CacheEntry。
+管线: ① 清洗 → ② 归一化 (jieba+变体+拼音) → ③ 循环压缩 → ④ SimHash → ⑤ 去重
 """
 
 import time
@@ -12,8 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from src.engine.preprocessor import basic_cleanse
-from src.engine.alias_normalizer import AliasNormalizer
-from src.engine.variant_normalizer import VariantNormalizer
+from src.engine.normalizer import Normalizer
 from src.engine.cycle_compressor import compress_cycle
 from src.engine.simhash_dedup import SimHashHelper
 from src.engine.dedup_store import DedupStore
@@ -41,8 +38,7 @@ class CanonicalRegistry:
 
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.alias_normalizer = AliasNormalizer(settings.preprocess.aliases_path)
-        self.variant_normalizer = VariantNormalizer(settings.preprocess.variants_path)
+        self.normalizer = Normalizer(settings.preprocess.variants_path)
         self.simhash = SimHashHelper(
             high_conf_distance=settings.preprocess.simhash_high_conf_distance,
             candidate_distance=settings.preprocess.simhash_candidate_distance,
@@ -56,13 +52,16 @@ class CanonicalRegistry:
         self.layer1_hits = 0
         self.layer3_new = 0
 
+    def _trusted_canonicals(self) -> set[str]:
+        """返回当前可信 canonical 集合 (dedup 中出现 ≥3 次)。"""
+        return {c for c in self.dedup_store if self.dedup_store.get_count(c) >= 3}
+
     def _skip_to_dedup(self, canonical: str, raw_text: str, msg_id: str,
                        stage_times: dict, cache_hits: list,
                        cached_emb: np.ndarray | None) -> RegisterResult:
-        """缓存命中 → 直接 dedup。"""
         t0 = time.perf_counter()
         is_new = self.dedup_store.add(canonical, count=1, raw_text=raw_text, msg_id=msg_id)
-        stage_times["⑥_dedup"] = (time.perf_counter() - t0) * 1000
+        stage_times["⑤_dedup"] = (time.perf_counter() - t0) * 1000
         for name, ms in stage_times.items():
             self.timer.record(name, ms)
         layer = 1 if not is_new else 3
@@ -90,69 +89,57 @@ class CanonicalRegistry:
             return RegisterResult(msg_id=msg_id, raw_text=raw_text, filtered=True,
                                   stage_times=stage_times, cache_hits=[])
 
-        # 查缓存
         entry = self.cache.get(cleaned)
         if entry is not None:
             self.timer.record("①_cleanse", stage_times["①_cleanse"])
             return self._skip_to_dedup(entry.canonical, raw_text, msg_id,
                                        stage_times, ["cleanse"], entry.embedding)
 
-        # ── ② 别名 ──
+        # ── ② 归一化 (alias + variant + pinyin) ──
         t0 = time.perf_counter()
-        text = self.alias_normalizer.normalize(cleaned)
-        stage_times["②_alias"] = (time.perf_counter() - t0) * 1000
-        entry = self.cache.get(text)
-        if entry is not None:
-            self.cache.put(cleaned, entry, canonical=entry.canonical)  # 补写上一步
-            for name, ms in stage_times.items(): self.timer.record(name, ms)
-            return self._skip_to_dedup(entry.canonical, raw_text, msg_id,
-                                       stage_times, ["alias"], entry.embedding)
+        trusted = self._trusted_canonicals()
+        normalized = self.normalizer.normalize(cleaned, trusted)
+        stage_times["②_normalize"] = (time.perf_counter() - t0) * 1000
 
-        # ── ③ 变体 ──
-        t0 = time.perf_counter()
-        alias_out = text
-        text = self.variant_normalizer.normalize(alias_out)
-        stage_times["③_variant"] = (time.perf_counter() - t0) * 1000
-        entry = self.cache.get(text)
+        entry = self.cache.get(normalized)
         if entry is not None:
-            for t in [cleaned, alias_out]:
-                self.cache.put(t, entry, canonical=entry.canonical)
-            for name, ms in stage_times.items(): self.timer.record(name, ms)
+            self.cache.put(cleaned, entry, canonical=entry.canonical)
+            for name, ms in stage_times.items():
+                self.timer.record(name, ms)
             return self._skip_to_dedup(entry.canonical, raw_text, msg_id,
-                                       stage_times, ["variant"], entry.embedding)
+                                       stage_times, ["normalize"], entry.embedding)
 
-        # ── ④ 循环 ──
+        # ── ③ 循环压缩 ──
         t0 = time.perf_counter()
-        variant_out = text
-        text = compress_cycle(variant_out)
-        stage_times["④_cycle"] = (time.perf_counter() - t0) * 1000
+        text = compress_cycle(normalized)
+        stage_times["③_cycle"] = (time.perf_counter() - t0) * 1000
+
         entry = self.cache.get(text)
         if entry is not None:
-            for t in [cleaned, alias_out, variant_out]:
-                self.cache.put(t, entry, canonical=entry.canonical)
-            for name, ms in stage_times.items(): self.timer.record(name, ms)
+            self.cache.put(cleaned, entry, canonical=entry.canonical)
+            self.cache.put(normalized, entry, canonical=entry.canonical)
+            for name, ms in stage_times.items():
+                self.timer.record(name, ms)
             return self._skip_to_dedup(entry.canonical, raw_text, msg_id,
                                        stage_times, ["cycle"], entry.embedding)
 
-        # ── ⑤ SimHash ──
+        # ── ④ SimHash ──
         t0 = time.perf_counter()
         self.simhash.add(text)
         canonical_text, is_auto = self.simhash.find_canonical(text)
         if is_auto and canonical_text:
             text = canonical_text
-        stage_times["⑤_simhash"] = (time.perf_counter() - t0) * 1000
+        stage_times["④_simhash"] = (time.perf_counter() - t0) * 1000
 
-        # ── 全流程走完: 写入缓存 ──
+        # ── 写入缓存 ──
         final = text
-        # 先写入 embedding=None 的占位条目 (等 ingest() 回填)
-        for t in [cleaned, alias_out, variant_out, final]:
-            self.cache.put(t, CacheEntry(canonical=final, embedding=None),
-                           canonical=final)
+        for t in [cleaned, normalized, final]:
+            self.cache.put(t, CacheEntry(canonical=final, embedding=None), canonical=final)
 
-        # ── ⑥ 去重 ──
+        # ── ⑤ 去重 ──
         t0 = time.perf_counter()
         is_new = self.dedup_store.add(final, count=1, raw_text=raw_text, msg_id=msg_id)
-        stage_times["⑥_dedup"] = (time.perf_counter() - t0) * 1000
+        stage_times["⑤_dedup"] = (time.perf_counter() - t0) * 1000
         for name, ms in stage_times.items():
             self.timer.record(name, ms)
 

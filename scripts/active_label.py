@@ -16,8 +16,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.engine.preprocessor import basic_cleanse
-from src.engine.alias_normalizer import AliasNormalizer
-from src.engine.variant_normalizer import VariantNormalizer
+from src.engine.normalizer import Normalizer
 from src.engine.cycle_compressor import compress_cycle
 from sentence_transformers import SentenceTransformer
 try:
@@ -77,8 +76,7 @@ def main():
 
     # 1. 加载 + 预处理
     print("Loading & preprocessing CSV...")
-    alias_norm = AliasNormalizer(str(VARIANTS_PATH))
-    variant_norm = VariantNormalizer(str(VARIANTS_PATH))
+    normalizer = Normalizer(str(VARIANTS_PATH))
     canonical_freq: Counter[str] = Counter()
 
     with open(CSV_PATH, "r", encoding="utf-8-sig") as f:
@@ -89,8 +87,7 @@ def main():
             cleaned = basic_cleanse(msg, min_len=1, max_len=128)
             if cleaned is None:
                 continue
-            text = alias_norm.normalize(cleaned)
-            text = variant_norm.normalize(text)
+            text = normalizer.normalize(cleaned)
             text = compress_cycle(text)
             canonical_freq[text] += 1
 

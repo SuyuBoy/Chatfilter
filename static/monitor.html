@@ -250,7 +250,7 @@ function applyState(s) {
 }
 
 let lastRawIds = new Set();
-const CACHE_STAGE_CN = {cleanse:'清洗', alias:'同义词替换', variant:'变体归一', cycle:'循环节压缩'};
+const CACHE_STAGE_CN = {cleanse:'清洗', normalize:'归一化', cycle:'循环节压缩'};
 
 function renderRaw(log) {
   const el = document.getElementById('raw_list');

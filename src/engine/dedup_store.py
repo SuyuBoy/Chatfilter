@@ -77,5 +77,8 @@ class DedupStore:
     def __contains__(self, canonical_text: str) -> bool:
         return canonical_text in self._store
 
+    def __iter__(self):
+        return iter(self._store)
+
     def __len__(self) -> int:
         return len(self._store)
