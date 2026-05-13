@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>弹幕语义聚类 — 前端版 (transformers.js)</title>
+<style>
+  :root {
+    --bg: #ffffff; --card: #f6f8fa; --border: #d0d7de;
+    --text: #1f2328; --muted: #656d76; --accent: #0969da;
+    --green: #1a7f37; --orange: #bf8700; --red: #cf222e; --purple: #8250df;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:var(--bg); color:var(--text);
+    font-family:'Segoe UI',system-ui,sans-serif;
+    height:100vh; display:flex; flex-direction:column; overflow:hidden;
+  }
+  .topbar {
+    display:flex; align-items:center; gap:24px; padding:10px 16px;
+    background:var(--card); border-bottom:1px solid var(--border); flex-shrink:0;
+  }
+  .topbar h1 { font-size:18px; color:var(--accent); white-space:nowrap; }
+  .stat { display:flex; align-items:baseline; gap:6px; font-size:13px; }
+  .stat .val { font-size:20px; font-weight:700; color:var(--accent); }
+  .stat .label { color:var(--muted); }
+  .sep { color:var(--border); }
+  .status-badge {
+    font-size:11px; padding:2px 8px; border-radius:10px;
+    background:rgba(9,105,218,0.1); color:var(--accent); font-weight:600;
+  }
+
+  .main {
+    display:grid; grid-template-columns:1fr 1fr 3fr; gap:1px;
+    background:var(--border); flex:1; overflow:hidden; min-height:0;
+  }
+  .col { background:var(--bg); display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+  .col-header {
+    padding:8px 12px; font-size:13px; font-weight:600;
+    background:var(--card); border-bottom:1px solid var(--border);
+    flex-shrink:0; display:flex; justify-content:space-between; align-items:center;
+  }
+  .col-header .count { font-size:11px; color:var(--muted); font-weight:400; }
+  .col-body { flex:1; overflow-y:auto; padding:4px 0; min-height:0; }
+
+  .entry {
+    padding:5px 12px; font-size:12px; border-bottom:1px solid rgba(48,54,61,0.5);
+    display:flex; gap:6px; align-items:flex-start;
+  }
+  .entry .idx { color:var(--muted); font-size:10px; min-width:24px; text-align:right; flex-shrink:0; }
+  .entry .txt { word-break:break-all; flex:1; }
+  .entry .tag {
+    font-size:10px; padding:0 5px; border-radius:3px; flex-shrink:0;
+    background:rgba(88,166,255,0.15); color:var(--accent);
+  }
+  .entry.new .tag { background:rgba(63,185,80,0.15); color:var(--green); }
+
+  .cluster-card {
+    margin:2px; padding:6px 8px; background:var(--card);
+    border:1px solid var(--border); border-radius:6px; font-size:13px;
+    display:flex; flex-direction:column; overflow:hidden; min-height:0;
+  }
+  .cluster-card .head { display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
+  .cluster-card .canonical {
+    font-weight:700; color:var(--accent);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:14px;
+  }
+  .cluster-card .cnt { font-size:11px; color:var(--green); flex-shrink:0; margin-left:4px; }
+  .cluster-card .members { color:var(--muted); font-size:11px; line-height:1.4; overflow:hidden; flex:1; min-height:0; }
+  .cluster-card .member {
+    display:inline-block; background:rgba(163,113,247,0.12); color:var(--purple);
+    padding:0 4px; border-radius:3px; margin:1px 2px 1px 0;
+  }
+
+  .ctrlbar {
+    display:flex; align-items:center; gap:20px; padding:6px 16px;
+    background:var(--card); border-bottom:1px solid var(--border);
+    flex-shrink:0; font-size:12px;
+  }
+  .ctrlbar label { color:var(--muted); white-space:nowrap; }
+  .ctrlbar input[type=range] { width:120px; accent-color:var(--accent); }
+  .ctrlbar .val { color:var(--accent); font-weight:600; min-width:32px; }
+  .ctrlbar input[type=text], .ctrlbar input[type=file] {
+    flex:1; max-width:260px; padding:4px 8px; font-size:12px;
+    border:1px solid var(--border); border-radius:4px; background:var(--bg); color:var(--text);
+    outline:none;
+  }
+  .ctrlbar input[type=text]:focus { border-color:var(--accent); }
+  .ctrlbar button {
+    padding:4px 12px; font-size:12px; background:var(--accent); color:#fff;
+    border:none; border-radius:4px; cursor:pointer;
+  }
+  .ctrlbar button:hover { opacity:0.85; }
+
+  ::-webkit-scrollbar { width:5px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+  /* Setup Modal */
+  .overlay {
+    display: flex; position:fixed; inset:0; z-index:1000;
+    background:rgba(0,0,0,0.5); align-items:center; justify-content:center;
+  }
+  .modal {
+    background:var(--bg); border-radius:12px; padding:32px;
+    max-width:480px; width:90%; box-shadow:0 8px 32px rgba(0,0,0,0.2);
+  }
+  .modal h2 { font-size:20px; margin-bottom:8px; }
+  .modal .sub { font-size:13px; color:var(--muted); margin-bottom:24px; line-height:1.5; }
+  .modal .btn-row { display:flex; gap:12px; margin-bottom:16px; }
+  .modal button.big {
+    flex:1; padding:16px 12px; border:2px solid var(--border); border-radius:8px;
+    background:var(--card); cursor:pointer; font-size:14px; text-align:center; transition:border-color .2s;
+  }
+  .modal button.big:hover { border-color:var(--accent); }
+  .modal button.big .icon { font-size:28px; display:block; margin-bottom:6px; }
+  .modal button.big:disabled { opacity:0.5; cursor:not-allowed; }
+  .modal .status { font-size:13px; color:var(--muted); margin-top:12px; min-height:20px; }
+  .modal .progress { font-size:12px; color:var(--accent); margin-top:4px; display:none; }
+  .modal .file-list { margin-top:12px; display:none; padding:8px; background:var(--card); border-radius:6px; }
+  .modal .link { color:var(--accent); word-break:break-all; font-size:11px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>弹幕语义聚类</h1>
+  <span class="sep">|</span>
+  <div class="stat"><span class="val" id="st_ingested">0</span><span class="label">摄入</span></div>
+  <div class="stat"><span class="val" id="st_unique">0</span><span class="label">唯一</span></div>
+  <div class="stat"><span class="val" id="st_clusters">0</span><span class="label">聚类</span></div>
+  <div class="stat"><span class="val" id="st_slots">40</span><span class="label">槽位</span></div>
+  <span class="sep">|</span>
+  <div class="stat"><span class="label">簇心阈值</span><span class="val" style="font-size:14px" id="st_ct">0.40</span></div>
+  <div class="stat"><span class="label">锚点阈值</span><span class="val" style="font-size:14px" id="st_at">0.60</span></div>
+  <span class="sep">|</span>
+  <div class="stat"><span class="label">缓存命中</span><span class="val" style="font-size:14px" id="st_cache">—</span></div>
+  <span class="sep">|</span>
+  <div class="status-badge" id="model_status">Loading...</div>
+</div>
+
+<div class="ctrlbar">
+  <span style="color:var(--muted)">聚类粒度</span>
+  <label>簇心</label>
+  <input type="text" id="in_ct" value="0.40" style="width:55px;padding:2px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
+  <label>锚点</label>
+  <input type="text" id="in_at" value="0.60" style="width:55px;padding:2px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
+  <button id="apply_threshold">应用</button>
+  <span style="color:var(--muted)">|</span>
+  <label>卡片宽</label>
+  <input type="range" id="card_width" min="160" max="500" value="280" style="width:80px;">
+  <span style="font-size:11px;color:var(--muted)" id="card_width_val">280px</span>
+  <span style="flex:1"></span>
+  <input type="text" id="manual_input" placeholder="手写弹幕，回车发送…" maxlength="128">
+  <button id="manual_send">发送</button>
+  <span style="color:var(--muted)">|</span>
+  <input type="file" id="file_input" accept=".csv,.txt" style="font-size:11px;">
+  <span style="font-size:10px;color:var(--muted)" id="bulk_status"></span>
+</div>
+
+<div class="ctrlbar" id="perm_bar" style="font-size:11px;gap:6px;min-height:28px;display:none;overflow-x:auto;overflow-y:hidden;white-space:nowrap;"></div>
+
+<div class="main">
+  <div class="col">
+    <div class="col-header">原始弹幕 <span class="count" id="cnt_raw">0</span></div>
+    <div class="col-body" id="raw_list"></div>
+  </div>
+  <div class="col">
+    <div class="col-header">预处理后 <span class="count" id="cnt_pre">0</span></div>
+    <div class="col-body" id="pre_list"></div>
+  </div>
+  <div class="col">
+    <div class="col-header">语义聚类 <span class="count" id="cnt_clu">0</span></div>
+    <div class="col-body" id="clu_grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px;grid-auto-rows:minmax(52px,auto);align-content:start;"></div>
+  </div>
+</div>
+
+<!-- Model Setup Modal -->
+<div class="overlay" id="setup_overlay">
+  <div class="modal">
+    <h2>🔧 模型加载</h2>
+    <div class="sub">
+      需要 BGE-small-zh-v1.5 模型 (~90MB) 才能运行。<br>
+      选择一种方式加载模型:
+    </div>
+    <div class="btn-row">
+      <button class="big" id="btn_auto">
+        <span class="icon">🌐</span>
+        自动下载
+      </button>
+      <button class="big" id="btn_manual">
+        <span class="icon">📁</span>
+        手动选择文件夹
+      </button>
+    </div>
+    <div class="status" id="setup_status"></div>
+    <div class="progress" id="setup_progress"></div>
+    <div class="file-list" id="file_checklist_area">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">
+        手动下载: <a class="link" href="https://huggingface.co/Xenova/bge-small-zh-v1.5/tree/main" target="_blank">https://huggingface.co/Xenova/bge-small-zh-v1.5</a><br>
+        下载后选择模型文件夹即可
+      </div>
+      <div id="file_checklist"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden directory picker -->
+<input type="file" id="dir_picker" webkitdirectory style="display:none">
+
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

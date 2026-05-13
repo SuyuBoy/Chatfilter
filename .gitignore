@@ -21,3 +21,15 @@ models/**/*.bin
 models/**/tokenizer.json
 models/**/vocab.txt
 models/**/.git/
+
+# ONNX 导出 + Cython 编译产物
+models/*-onnx/
+*.onnx
+*.onnx.data
+*.c
+*.so
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+*.tar.gz

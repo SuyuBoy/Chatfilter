@@ -5,13 +5,15 @@ PipelineEngine — 业务编排入口。
       缓存由 UnifiedCache 统一管理。聚类逻辑见 cluster_engine.py。
 """
 
+import time
+
 import numpy as np
 
 from config.settings import get_settings, Settings
 from src.engine.canonical_registry import CanonicalRegistry
 from src.engine.embedder import Embedder
 from src.engine.cluster_engine import ClusterEngine
-from src.engine.pipeline_cache import CacheEntry
+from src.engine.pipeline_cache import CacheEntry, PipelineTimer
 
 
 class PipelineEngine:
@@ -24,6 +26,7 @@ class PipelineEngine:
         self.cluster = ClusterEngine(self.settings)
         self.total_ingested = 0
         self._initialized = False
+        self.timer = PipelineTimer()
 
     async def initialize(self):
         if not self._initialized:
@@ -48,9 +51,12 @@ class PipelineEngine:
         # 批量编码
         canonicals = [c for _, c in need_emb]
         if canonicals:
+            t0 = time.perf_counter()
             embs = self.embedder.encode_batched(canonicals)
-            if len(canonicals) == 1:
-                embs = np.array([embs])
+            emb_ms = (time.perf_counter() - t0) * 1000
+            per_item_ms = emb_ms / len(canonicals)
+            for _ in canonicals:
+                self.timer.record("embedding", per_item_ms)
             for (idx, canonical), emb in zip(need_emb, embs):
                 results[idx].cached_embedding = emb
                 self.registry.cache.backfill(canonical, emb)
@@ -71,7 +77,9 @@ class PipelineEngine:
         if emb is None and entry is not None:
             emb = entry.embedding
         if emb is None:
+            t0 = time.perf_counter()
             emb = self.embedder._encode_sync([canonical])[0]
+            self.timer.record("embedding", (time.perf_counter() - t0) * 1000)
             self.registry.cache.backfill(canonical, emb)
 
         return self._cluster_result(result)
@@ -88,10 +96,13 @@ class PipelineEngine:
             entry = self.registry.cache.get(canonical)
             emb = entry.embedding if entry else None
         if emb is None:
+            t0 = time.perf_counter()
             emb = self.embedder._encode_sync([canonical])[0]
+            self.timer.record("embedding", (time.perf_counter() - t0) * 1000)
             self.registry.cache.backfill(canonical, emb)
 
         conf = self.settings.cluster
+        t0 = time.perf_counter()
         slot, is_perm = self.cluster.find_cluster(emb, len(result.raw_text))
 
         if slot is not None:
@@ -103,6 +114,7 @@ class PipelineEngine:
             if not is_perm and slot.total_count >= conf.permanent_threshold:
                 self.cluster.promote(slot, self.embedder)
             self.cluster.maintenance(self.total_ingested, self.registry.cache)
+            self.timer.record("cluster", (time.perf_counter() - t0) * 1000)
             return {"cluster_id": slot.cluster_id, "canonical": canonical,
                     "raw_text": result.raw_text, "slot_id": slot.slot_id,
                     "is_new": False, "filtered": False, "permanent": is_perm,
@@ -113,6 +125,7 @@ class PipelineEngine:
                                 CacheEntry(canonical=canonical, embedding=emb, cluster_id=cid),
                                 canonical=canonical, cluster_id=cid)
         self.cluster.maintenance(self.total_ingested, self.registry.cache)
+        self.timer.record("cluster", (time.perf_counter() - t0) * 1000)
         return {"cluster_id": cid, "canonical": canonical,
                 "raw_text": result.raw_text, "slot_id": sid,
                 "is_new": True, "filtered": False,
@@ -126,6 +139,8 @@ class PipelineEngine:
 
     def get_state(self) -> dict:
         cache_stats = self.registry.cache.stats()
+        emb_stage = self.timer.stages.get("embedding")
+        clu_stage = self.timer.stages.get("cluster")
         return {"ingested": self.total_ingested, "unique": self.registry.unique_count,
                 "centroid": self.settings.cluster.centroid_threshold,
                 "anchor": self.settings.cluster.anchor_threshold,
@@ -134,6 +149,8 @@ class PipelineEngine:
                 "perm_count": len(self.cluster.permanent),
                 "cache_hits": cache_stats["hits"], "cache_misses": cache_stats["misses"],
                 "cache_hit_rate": cache_stats["hit_rate"],
+                "embedding_avg_ms": round(emb_stage.recent_avg_ms, 2) if emb_stage else None,
+                "cluster_avg_ms": round(clu_stage.recent_avg_ms, 2) if clu_stage else None,
                 "stage_timing": self.registry.timer.stats()}
 
     def render(self) -> str:
@@ -143,6 +160,12 @@ class PipelineEngine:
         if timing:
             parts = [f"{n.split('_',1)[-1]}:{s['recent_avg_ms']:.1f}ms" for n, s in timing.items()]
             lines.append(f" 耗时: {' | '.join(parts)}")
+        emb_stage = self.timer.stages.get("embedding")
+        clu_stage = self.timer.stages.get("cluster")
+        if emb_stage or clu_stage:
+            ep = f"emb:{emb_stage.recent_avg_ms:.1f}ms" if emb_stage else "emb:—"
+            cp = f"cluster:{clu_stage.recent_avg_ms:.1f}ms" if clu_stage else "cluster:—"
+            lines.append(f" 后端: {ep}  {cp}")
         lines.append(self.cluster.render())
         lines.append("✏️  输入: ")
         return "\n".join(lines)

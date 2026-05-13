@@ -141,7 +141,9 @@
   <div class="stat"><span class="label">簇心阈值</span><span class="val" style="font-size:14px" id="st_ct">0.20</span></div>
   <div class="stat"><span class="label">锚点阈值</span><span class="val" style="font-size:14px" id="st_at">0.80</span></div>
   <span class="sep">|</span>
-  <div class="stat"><span class="label">统一缓存</span><span class="val" style="font-size:14px" id="st_cache">—</span></div>
+  <div class="stat"><span class="label">排队</span><span class="val" style="font-size:14px" id="st_queue">0</span></div>
+  <span class="sep">|</span>
+  <div class="stat"><span class="label">缓存命中</span><span class="val" style="font-size:14px" id="st_cache">—</span></div>
   <span class="sep">|</span>
   <div class="stat"><span class="label">emb耗时</span><span class="val" style="font-size:14px" id="st_emb_ms">—</span></div>
   <div class="stat"><span class="label">聚类耗时</span><span class="val" style="font-size:14px" id="st_clu_ms">—</span></div>
@@ -225,6 +227,7 @@ function applyState(s) {
   document.getElementById('st_ct').textContent = (s.centroid || 0.78).toFixed(2);
   document.getElementById('st_at').textContent = (s.anchor || 0.82).toFixed(2);
   const hr = s.cache_hit_rate;
+  document.getElementById('st_queue').textContent = s.queue_size ?? 0;
   document.getElementById('st_cache').textContent = hr != null ? (hr * 100).toFixed(1) + '%' : '—';
   document.getElementById('st_emb_ms').textContent = (s.embedding_avg_ms != null) ? s.embedding_avg_ms.toFixed(1) + 'ms' : '—';
   document.getElementById('st_clu_ms').textContent = (s.cluster_avg_ms != null) ? s.cluster_avg_ms.toFixed(1) + 'ms' : '—';

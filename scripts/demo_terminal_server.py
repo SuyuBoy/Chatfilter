@@ -40,6 +40,7 @@ async def run_server(port: int):
     def get_state():
         state = engine.get_state()
         state["raw_log"] = list(_RECENT_BUFFER)
+        state["queue_size"] = httpd.queue.qsize()
         return state
     httpd.set_state_getter(get_state)
 

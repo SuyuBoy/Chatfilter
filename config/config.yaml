@@ -1,0 +1,42 @@
+# chatfilter 配置文件
+# 环境变量覆盖: CHATFILTER__<section>__<field>=value
+# 例: CHATFILTER__cluster__centroid_threshold=0.5
+
+preprocess:
+  min_text_length: 1
+  max_text_length: 128
+  aliases_path: "config/variants.yaml"
+  variants_path: "config/variants.yaml"
+  cycle_min_repeats: 2
+  simhash_bits: 64
+  simhash_ngram: 3
+  simhash_high_conf_distance: 2
+  simhash_candidate_distance: 3
+  simhash_min_text_length: 8
+
+embedding:
+  model_name: "models/bge-small-zh-v1.5"
+  onnx_path: ""
+  onnx_threads: 2
+  cache_ttl: 600.0
+  cache_max_size: 50000
+  embedding_dim: 0
+  normalize: true
+  ft_model_path: ""
+  embed_batch_size: 32
+  embed_batch_timeout_ms: 100
+
+cluster:
+  centroid_threshold: 0.4
+  anchor_threshold: 0.6
+  max_slots: 40
+  merge_threshold: 0.92
+  split_variance_threshold: 0.50
+  maintenance_interval: 300
+  max_member_embeddings: 50
+  permanent_ttl_seconds: 600
+  permanent_threshold: 100
+  permanent_centroid_threshold: 0.75
+  permanent_anchor_threshold: 0.82
+  permanent_merge_threshold: 0.94
+  permanent_split_variance_threshold: 0.45
