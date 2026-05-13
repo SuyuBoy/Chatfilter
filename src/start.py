@@ -143,6 +143,6 @@ class PipelineEngine:
         if timing:
             parts = [f"{n.split('_',1)[-1]}:{s['recent_avg_ms']:.1f}ms" for n, s in timing.items()]
             lines.append(f" 耗时: {' | '.join(parts)}")
-        lines.append(self.cluster.render(self.registry))
+        lines.append(self.cluster.render())
         lines.append("✏️  输入: ")
         return "\n".join(lines)

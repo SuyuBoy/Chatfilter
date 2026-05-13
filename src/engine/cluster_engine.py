@@ -18,8 +18,6 @@ import numpy as np
 
 from config.settings import Settings, get_settings
 from src.engine.micro_cluster import MicroCluster
-from src.engine.canonical_registry import CanonicalRegistry
-from src.engine.pipeline_cache import CacheEntry
 
 
 @dataclass
@@ -36,10 +34,11 @@ class SlotState:
     _member_embeddings: list[np.ndarray] = field(default_factory=list)
     _canonicals: set = field(default_factory=set)
 
-    def _add_member_emb(self, emb: np.ndarray):
+    def _add_member_emb(self, emb: np.ndarray, max_keep: int = 10):
         self._member_embeddings.append(emb.copy())
-        if len(self._member_embeddings) > 10:
-            self._member_embeddings = self._member_embeddings[:5] + self._member_embeddings[-5:]
+        if len(self._member_embeddings) > max_keep:
+            half = max_keep // 2
+            self._member_embeddings = self._member_embeddings[:half] + self._member_embeddings[-half:]
 
     def internal_similarity(self) -> float:
         if len(self._member_embeddings) < 2 or self.centroid is None:
@@ -57,8 +56,7 @@ class ClusterEngine:
         self.permanent: OrderedDict[str, SlotState] = OrderedDict()
         self._next_perm_id = 1
 
-    def find_cluster(self, emb: np.ndarray, text_len: int,
-                     embedder=None) -> tuple[SlotState | None, bool]:
+    def find_cluster(self, emb: np.ndarray, text_len: int) -> tuple[SlotState | None, bool]:
         """找最佳匹配簇。返回 (slot, is_permanent)。
 
         顺序: 先热点(严格阈值) → 后常规(普通阈值)。"""
@@ -106,7 +104,8 @@ class ClusterEngine:
         if raw not in slot.top_examples:
             slot.top_examples.append(raw)
         slot.top_examples = sorted(set(slot.top_examples), key=lambda t: -len(t))[:3]
-        slot._add_member_emb(emb)
+        max_ke = self.settings.cluster.max_member_embeddings
+        slot._add_member_emb(emb, max_ke)
         if canonical:
             slot._canonicals.add(canonical)
 
@@ -118,7 +117,8 @@ class ClusterEngine:
                          total_count=1, top_examples=[raw], latest_raw=raw,
                          last_update=time.time(), centroid=emb.copy(),
                          _canonicals={canonical})
-        slot._add_member_emb(emb)
+        max_ke = self.settings.cluster.max_member_embeddings
+        slot._add_member_emb(emb, max_ke)
         self.slots[canonical] = slot
         return sid, cid
 
@@ -176,7 +176,8 @@ class ClusterEngine:
         self._merge_similar(self.permanent, conf.permanent_merge_threshold, check_sentiment=True)
         self._split_degraded(self.permanent, conf.permanent_split_variance_threshold, 9999, cache)
         now = time.time()
-        expired = [c for c, s in self.permanent.items() if now - s.last_update > 600]
+        ttl = self.settings.cluster.permanent_ttl_seconds
+        expired = [c for c, s in self.permanent.items() if now - s.last_update > ttl]
         for c in expired:
             del self.permanent[c]
 
@@ -213,8 +214,7 @@ class ClusterEngine:
         for c in merged:
             del d[c]
 
-    @staticmethod
-    def _absorb(target: SlotState, source: SlotState):
+    def _absorb(self, target: SlotState, source: SlotState):
         n = target.total_count + source.total_count
         if target.centroid is not None and source.centroid is not None:
             target.centroid = (target.centroid * target.total_count +
@@ -227,8 +227,9 @@ class ClusterEngine:
         target.top_examples = sorted(set(target.top_examples), key=lambda t: -len(t))[:3]
         if source.latest_raw and not target.latest_raw:
             target.latest_raw = source.latest_raw
+        max_ke = self.settings.cluster.max_member_embeddings
         for emb in source._member_embeddings:
-            target._add_member_emb(emb)
+            target._add_member_emb(emb, max_ke)
         target._canonicals.update(source._canonicals)
 
     def _split_degraded(self, d: OrderedDict, threshold: float, max_slots: int, cache=None):
@@ -289,7 +290,7 @@ class ClusterEngine:
         return [self.serialize_slot(s, registry) for s in
                 sorted(self.permanent.values(), key=lambda s: -s.total_count)]
 
-    def render(self, registry) -> str:
+    def render(self) -> str:
         ct = self.settings.cluster.centroid_threshold
         at = self.settings.cluster.anchor_threshold
         lines = ["═" * 55]

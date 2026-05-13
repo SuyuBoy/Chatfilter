@@ -44,6 +44,8 @@ class ClusterConfig:
     split_variance_threshold: float = 0.50       # 簇内平均相似度低于此值触发拆分
     maintenance_interval: int = 300              # 每 N 条消息执行一次合并+拆分
     # 永久语义 (count > threshold 晋升, 不限数量, 永不淘汰)
+    max_member_embeddings: int = 10             # 簇内保留的成员 embedding 数上限
+    permanent_ttl_seconds: int = 600             # 热点语义无更新淘汰时间 (秒)
     permanent_threshold: int = 100               # 消息数超过此值晋升为永久语义
     permanent_centroid_threshold: float = 0.75   # 永久语义聚类阈值 (更严格)
     permanent_anchor_threshold: float = 0.82     # 永久语义锚点阈值 (更严格)
