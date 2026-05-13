@@ -1,0 +1,3 @@
+[submodule "frontend/external/event-bridge"]
+	path = frontend/external/event-bridge
+	url = https://github.com/laplace-live/event-bridge
