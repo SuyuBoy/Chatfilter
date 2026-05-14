@@ -1,5 +1,4 @@
 import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
@@ -7,15 +6,8 @@ export default defineConfig({
   build: {
     target: 'esnext',
     outDir: 'dist',
-    rollupOptions: {
-      input: {
-        main: 'index.html',
-        dashboard: 'dashboard.html',
-      },
-    },
   },
   plugins: [
-    react(),
     viteStaticCopy({
       targets: [{
         src: 'node_modules/onnxruntime-web/dist/*.wasm',
@@ -23,7 +15,4 @@ export default defineConfig({
       }],
     }),
   ],
-  optimizeDeps: {
-    entries: ['index.html', 'dashboard.html'],
-  },
 });
