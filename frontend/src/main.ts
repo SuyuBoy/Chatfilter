@@ -343,3 +343,147 @@ document.getElementById('file_input')!.addEventListener('change', async (e) => {
   }
   nextBatch();
 });
+
+// ── Settings + Bridge ──
+import { setVariants } from './preprocess';
+
+let bridgeWs: WebSocket | null = null;
+
+// Load saved settings from localStorage
+function loadSettings(): { url: string; token: string; ct: number; at: number; variants: string } {
+  try {
+    return JSON.parse(localStorage.getItem('chatfilter_settings') || '{}');
+  } catch { return {} as any; }
+}
+
+function saveSettings(settings: object) {
+  localStorage.setItem('chatfilter_settings', JSON.stringify(settings));
+}
+
+// Settings modal
+document.getElementById('btn_settings')!.onclick = () => {
+  const s = loadSettings();
+  (document.getElementById('cfg_bridge_url') as HTMLInputElement).value = s.url || 'ws://localhost:9696';
+  (document.getElementById('cfg_bridge_token') as HTMLInputElement).value = s.token || '';
+  (document.getElementById('cfg_ct') as HTMLInputElement).value = String(s.ct || 0.40);
+  (document.getElementById('cfg_at') as HTMLInputElement).value = String(s.at || 0.60);
+  (document.getElementById('cfg_ct_val') as HTMLElement).textContent = (s.ct || 0.40).toFixed(2);
+  (document.getElementById('cfg_at_val') as HTMLElement).textContent = (s.at || 0.60).toFixed(2);
+  document.getElementById('settings_overlay')!.style.display = 'flex';
+};
+
+document.getElementById('btn_close_settings')!.onclick = () => {
+  document.getElementById('settings_overlay')!.style.display = 'none';
+};
+
+// Slider live preview
+document.getElementById('cfg_ct')!.oninput = (e) => {
+  document.getElementById('cfg_ct_val')!.textContent = parseFloat((e.target as HTMLInputElement).value).toFixed(2);
+};
+document.getElementById('cfg_at')!.oninput = (e) => {
+  document.getElementById('cfg_at_val')!.textContent = parseFloat((e.target as HTMLInputElement).value).toFixed(2);
+};
+
+// Variant file upload
+document.getElementById('cfg_variants_file')!.onchange = async (e) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (typeof data !== 'object') throw new Error('Must be a JSON object');
+    setVariants(data);
+    const s = loadSettings();
+    s.variants = text;
+    saveSettings(s);
+    document.getElementById('cfg_variants_status')!.textContent = `✅ 已加载 ${Object.keys(data).length} 个变体词`;
+  } catch (err: any) {
+    document.getElementById('cfg_variants_status')!.textContent = `❌ ${err.message}`;
+  }
+};
+
+// Save + Connect bridge
+document.getElementById('btn_settings_connect')!.onclick = () => {
+  doSaveSettings();
+  connectBridge();
+  document.getElementById('settings_overlay')!.style.display = 'none';
+};
+
+document.getElementById('btn_save_settings')!.onclick = () => {
+  doSaveSettings();
+  document.getElementById('settings_overlay')!.style.display = 'none';
+};
+
+function doSaveSettings() {
+  const settings = {
+    url: (document.getElementById('cfg_bridge_url') as HTMLInputElement).value,
+    token: (document.getElementById('cfg_bridge_token') as HTMLInputElement).value,
+    ct: parseFloat((document.getElementById('cfg_ct') as HTMLInputElement).value),
+    at: parseFloat((document.getElementById('cfg_at') as HTMLInputElement).value),
+  };
+  saveSettings(settings);
+  engine.cluster.config.centroidThreshold = settings.ct;
+  engine.cluster.config.anchorThreshold = settings.at;
+  updateState();
+}
+
+function connectBridge() {
+  disconnectBridge();
+  const s = loadSettings();
+  if (!s.url) return;
+
+  try {
+    bridgeWs = new WebSocket(s.url, s.token ? ['laplace-event-bridge-role-client', s.token] : ['laplace-event-bridge-role-client']);
+    bridgeWs.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data);
+        if (event.type === 'message' && event.message && modelReady) {
+          queueIngestFromBridge(event.message);
+        }
+      } catch {}
+    };
+    bridgeWs.onopen = () => { document.getElementById('model_status')!.textContent = 'Bridge OK'; };
+    bridgeWs.onclose = () => { document.getElementById('model_status')!.textContent = 'Bridge disconnected'; };
+    bridgeWs.onerror = () => { document.getElementById('model_status')!.textContent = 'Bridge error'; };
+  } catch (e) {
+    console.error('Bridge connect failed:', e);
+  }
+}
+
+function disconnectBridge() {
+  bridgeWs?.close();
+  bridgeWs = null;
+}
+
+function queueIngestFromBridge(text: string) {
+  engine.ingest(text).then(r => {
+    if (!r.filtered) {
+      recentLog.unshift({ id: ++logSeq, raw: r.rawText, canonical: r.canonical, clusterId: r.clusterId, slotId: r.slotId });
+      if (recentLog.length > 200) recentLog.pop();
+      updateState();
+    }
+  });
+}
+
+// Apply saved settings on startup
+function applySavedSettings() {
+  const s = loadSettings();
+  if (s.ct) engine.cluster.config.centroidThreshold = s.ct;
+  if (s.at) engine.cluster.config.anchorThreshold = s.at;
+  if (s.variants) {
+    try { setVariants(JSON.parse(s.variants)); } catch {}
+  }
+  // Auto-connect if bridge URL was saved
+  if (s.url && modelReady) setTimeout(connectBridge, 500);
+}
+
+// Override showSetupModal to auto-connect after model ready
+const origShowSetupModal = showSetupModal;
+showSetupModal = () => origShowSetupModal();
+
+// After model loads, apply settings
+const origHideSetupModal = hideSetupModal;
+hideSetupModal = () => {
+  origHideSetupModal();
+  applySavedSettings();
+};

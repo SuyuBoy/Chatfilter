@@ -69,8 +69,8 @@ function toPinyin(text: string): string {
   return result;
 }
 
-// 变体字典 (谐音/缩写)
-const VARIANTS: Record<string, string> = {
+// 变体字典 (谐音/缩写) — 可通过 setVariants() 动态扩展
+let VARIANTS: Record<string, string> = {
   'xswl': '笑死我了', 'yyds': '永远的神', 'awsl': '啊我死了',
   'u1s1': '有一说一', 'srds': '虽然但是', 'zqsg': '真情实感',
   'dbq': '对不起', 'nsdd': '你说得对', 'pljj': '漂亮姐姐',
@@ -82,6 +82,12 @@ function normalize(text: string): string {
   const lower = text.toLowerCase();
   if (VARIANTS[lower]) return VARIANTS[lower];
   return text;
+}
+
+export function setVariants(newVariants: Record<string, string>) {
+  for (const [k, v] of Object.entries(newVariants)) {
+    VARIANTS[k.toLowerCase()] = v;
+  }
 }
 
 export function basicCleanse(text: string, minLen = 1, maxLen = 128): string | null {

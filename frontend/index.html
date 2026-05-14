@@ -137,6 +137,8 @@
   <div class="stat"><span class="label">缓存命中</span><span class="val" style="font-size:14px" id="st_cache">—</span></div>
   <span class="sep">|</span>
   <div class="status-badge" id="model_status">Loading...</div>
+  <span class="sep">|</span>
+  <button id="btn_settings" style="padding:4px 12px;font-size:12px;background:var(--card);color:var(--accent);border:1px solid var(--border);border-radius:4px;cursor:pointer">⚙ 设置</button>
 </div>
 
 <div class="ctrlbar">
@@ -202,6 +204,41 @@
       </div>
       <div id="file_checklist"></div>
     </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="overlay" id="settings_overlay" style="display:none">
+  <div class="modal" style="max-width:500px">
+    <h2>⚙ 设置</h2>
+    <div style="margin-top:16px;display:flex;flex-direction:column;gap:12px;font-size:13px">
+      <div>
+        <label style="color:var(--muted);display:block;margin-bottom:4px">Bridge 地址</label>
+        <input type="text" id="cfg_bridge_url" placeholder="ws://localhost:9696" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px">
+      </div>
+      <div>
+        <label style="color:var(--muted);display:block;margin-bottom:4px">Bridge Token (可选)</label>
+        <input type="text" id="cfg_bridge_token" placeholder="留空则无认证" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px">
+      </div>
+      <div>
+        <label style="color:var(--muted);display:block;margin-bottom:4px">簇心阈值: <b id="cfg_ct_val">0.40</b></label>
+        <input type="range" id="cfg_ct" min="0.01" max="0.99" step="0.01" value="0.40" style="width:100%">
+      </div>
+      <div>
+        <label style="color:var(--muted);display:block;margin-bottom:4px">锚点阈值: <b id="cfg_at_val">0.60</b></label>
+        <input type="range" id="cfg_at" min="0.01" max="0.99" step="0.01" value="0.60" style="width:100%">
+      </div>
+      <div>
+        <label style="color:var(--muted);display:block;margin-bottom:4px">谐音词 / 变体词 (JSON 文件)</label>
+        <input type="file" id="cfg_variants_file" accept=".json" style="font-size:12px">
+        <span id="cfg_variants_status" style="font-size:11px;color:var(--muted);display:block;margin-top:4px">格式: {"xswl": "笑死我了", "yyds": "永远的神"}</span>
+      </div>
+    </div>
+    <div style="margin-top:20px;display:flex;gap:12px">
+      <button id="btn_save_settings" style="flex:1;padding:8px;font-size:14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer">保存设置</button>
+      <button id="btn_close_settings" style="flex:1;padding:8px;font-size:14px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer">取消</button>
+    </div>
+    <button id="btn_settings_connect" style="width:100%;margin-top:8px;padding:8px;font-size:14px;background:var(--green);color:#fff;border:none;border-radius:6px;cursor:pointer">保存设置并连接 Bridge</button>
   </div>
 </div>
 
