@@ -127,9 +127,10 @@ let modelLoaded = false;
 export function getModelRepo() { return MODEL_REPO; }
 export function isModelReady() { return modelLoaded; }
 
+// HuggingFace download with browser IndexedDB cache
 export async function initAuto(onProgress?: (m: string) => void): Promise<void> {
   if (modelLoaded) return;
-  onProgress?.('正在下载模型...');
+  onProgress?.('正在下载模型... (首次较慢，之后浏览器缓存加速)');
   extractor = await pipeline('feature-extraction', MODEL_REPO, {
     progress_callback: (info: any) => {
       if (info.status === 'download' && info.file) {
