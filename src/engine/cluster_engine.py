@@ -15,7 +15,6 @@ from collections import OrderedDict, Counter
 from dataclasses import dataclass, field
 
 import numpy as np
-from sklearn.cluster import DBSCAN
 
 from config.settings import Settings, get_settings
 from src.engine.micro_cluster import MicroCluster
@@ -196,12 +195,14 @@ class ClusterEngine:
     # ── 周期维护 ──
 
     def maintenance(self, total_ingested: int, cache=None):
-        """每 maintenance_interval 条触发: DBSCAN 重构 + TTL淘汰。"""
+        """每 maintenance_interval 条触发: 合并+拆分+TTL淘汰。"""
         conf = self.settings.cluster
         if total_ingested % conf.maintenance_interval != 0:
             return
-        self._dbscan_reorganize(self.slots, conf.max_slots, conf.dbscan_eps, cache)
-        self._dbscan_reorganize(self.permanent, 9999, conf.permanent_dbscan_eps, cache)
+        self._merge_similar(self.slots, conf.merge_threshold)
+        self._split_degraded(self.slots, conf.split_variance_threshold, conf.max_slots, cache)
+        self._merge_similar(self.permanent, conf.permanent_merge_threshold, check_sentiment=True)
+        self._split_degraded(self.permanent, conf.permanent_split_variance_threshold, 9999, cache)
         now = time.time()
         ttl = self.settings.cluster.permanent_ttl_seconds
         expired = [c for c, s in self.permanent.items() if now - s.last_update > ttl]

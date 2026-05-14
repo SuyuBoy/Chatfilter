@@ -38,7 +38,7 @@ class EmbeddingConfig:
 @dataclass
 class ClusterConfig:
     """在线聚类 — Leader-Follower 双阈值 + 周期维护"""
-    centroid_threshold: float = 0.7
+    centroid_threshold: float = 0.5
     anchor_threshold: float = 0.8
     max_slots: int = 40
     merge_threshold: float = 0.92
