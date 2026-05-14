@@ -11,13 +11,14 @@
 
 import time
 import random
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from config.settings import Settings, get_settings
 from src.engine.micro_cluster import MicroCluster
+from src.engine.keyword_util import extract_keywords
 
 
 @dataclass
@@ -33,6 +34,8 @@ class SlotState:
     centroid: np.ndarray | None = None
     _member_embeddings: list[np.ndarray] = field(default_factory=list)
     _canonicals: set = field(default_factory=set)
+    keyword_freq: dict = field(default_factory=dict)  # 词→出现次数
+    top_keywords: list[str] = field(default_factory=list)  # 前 top_k 个关键词
 
     def _add_member_emb(self, emb: np.ndarray, max_keep: int = 10):
         self._member_embeddings.append(emb.copy())
@@ -56,21 +59,26 @@ class ClusterEngine:
         self.permanent: OrderedDict[str, SlotState] = OrderedDict()
         self._next_perm_id = 1
 
-    def find_cluster(self, emb: np.ndarray, text_len: int) -> tuple[SlotState | None, bool]:
+    def find_cluster(self, emb: np.ndarray, text_len: int,
+                     raw_text: str = "") -> tuple[SlotState | None, bool]:
         """找最佳匹配簇。返回 (slot, is_permanent)。"""
-        # 维度不匹配检测 (切换模型时自动清空旧 centroid)
         self._check_dim(emb)
         conf = self.settings.cluster
+        keywords = extract_keywords(raw_text, conf.keyword_topk) if raw_text else None
+        kw = conf.keyword_weight
+
         slot = self._find_in_dict(self.permanent, emb, text_len,
                                   conf.permanent_centroid_threshold,
                                   conf.permanent_anchor_threshold,
-                                  conf.permanent_split_variance_threshold)
+                                  conf.permanent_split_variance_threshold,
+                                  keywords, kw)
         if slot is not None:
             return slot, True
 
         slot = self._find_in_dict(self.slots, emb, text_len,
                                   conf.centroid_threshold, conf.anchor_threshold,
-                                  conf.split_variance_threshold)
+                                  conf.split_variance_threshold,
+                                  keywords, kw)
         return slot, False
 
     def _check_dim(self, emb: np.ndarray):
@@ -84,7 +92,8 @@ class ClusterEngine:
     @staticmethod
     def _find_in_dict(d: OrderedDict, emb: np.ndarray, text_len: int,
                       centroid_th: float, anchor_th: float,
-                      split_var_th: float) -> SlotState | None:
+                      split_var_th: float, keywords: list[str] | None = None,
+                      keyword_weight: float = 0.7) -> SlotState | None:
         best_sim, best_slot = -1.0, None
         for slot in d.values():
             if slot.centroid is None:
@@ -93,7 +102,10 @@ class ClusterEngine:
             mc.centroid = slot.centroid
             mc.anchor_examples = [slot.canonical_text]
             mc.anchor_embeddings = [slot.centroid]
-            if mc.can_join(emb, text_len, centroid_th, anchor_th):
+            if slot.top_keywords:
+                mc.top_keywords = slot.top_keywords
+            mc.keyword_weight = keyword_weight
+            if mc.can_join(emb, text_len, keywords, centroid_th, anchor_th):
                 sim = float(np.dot(emb, slot.centroid))
                 if len(slot._member_embeddings) >= 3 and slot.internal_similarity() < split_var_th:
                     continue
@@ -116,15 +128,23 @@ class ClusterEngine:
         slot._add_member_emb(emb, max_ke)
         if canonical:
             slot._canonicals.add(canonical)
+        # 更新关键词签名
+        for kw in extract_keywords(raw, self.settings.cluster.keyword_topk):
+            slot.keyword_freq[kw] = slot.keyword_freq.get(kw, 0) + 1
+        topk = self.settings.cluster.keyword_topk
+        slot.top_keywords = [w for w, _ in Counter(slot.keyword_freq).most_common(topk)]
 
     def new_slot(self, canonical: str, emb: np.ndarray, raw: str) -> tuple[int, str]:
         """新建常规槽位。"""
         sid = self._alloc_slot()
         cid = f"c{sid}"
+        kws = extract_keywords(raw, self.settings.cluster.keyword_topk)
+        kw_freq = {kw: 1 for kw in kws}
         slot = SlotState(slot_id=sid, cluster_id=cid, canonical_text=canonical,
                          total_count=1, top_examples=[raw], latest_raw=raw,
                          last_update=time.time(), centroid=emb.copy(),
-                         _canonicals={canonical})
+                         _canonicals={canonical},
+                         keyword_freq=kw_freq, top_keywords=kws)
         max_ke = self.settings.cluster.max_member_embeddings
         slot._add_member_emb(emb, max_ke)
         self.slots[canonical] = slot
@@ -239,6 +259,11 @@ class ClusterEngine:
         for emb in source._member_embeddings:
             target._add_member_emb(emb, max_ke)
         target._canonicals.update(source._canonicals)
+        # 合并关键词签名
+        for kw, cnt in source.keyword_freq.items():
+            target.keyword_freq[kw] = target.keyword_freq.get(kw, 0) + cnt
+        topk = self.settings.cluster.keyword_topk
+        target.top_keywords = [w for w, _ in Counter(target.keyword_freq).most_common(topk)]
 
     def _split_degraded(self, d: OrderedDict, threshold: float, max_slots: int, cache=None):
         to_split: list[tuple[str, SlotState]] = []
@@ -287,6 +312,7 @@ class ClusterEngine:
         return {"cluster_id": s.cluster_id, "slot_id": s.slot_id,
                 "canonical_text": s.canonical_text, "total_count": s.total_count,
                 "type": "semantic", "top_examples": s.top_examples[:5],
+                "top_keywords": s.top_keywords,
                 "members": [{"text": m["raw"], "count": 1} for m in all_members[:8]],
                 "latest_raw": s.latest_raw}
 

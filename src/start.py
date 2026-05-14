@@ -103,7 +103,7 @@ class PipelineEngine:
 
         conf = self.settings.cluster
         t0 = time.perf_counter()
-        slot, is_perm = self.cluster.find_cluster(emb, len(result.raw_text))
+        slot, is_perm = self.cluster.find_cluster(emb, len(result.raw_text), result.raw_text)
 
         if slot is not None:
             self.cluster.join(slot, emb, result.raw_text, canonical)

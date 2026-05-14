@@ -40,3 +40,6 @@ cluster:
   permanent_anchor_threshold: 0.82
   permanent_merge_threshold: 0.94
   permanent_split_variance_threshold: 0.45
+  # 关键词双通道 (k-NLPmeans): alpha=嵌入权重, topk=每簇关键词数
+  keyword_weight: 0.7
+  keyword_topk: 5

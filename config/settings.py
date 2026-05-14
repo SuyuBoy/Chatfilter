@@ -51,6 +51,9 @@ class ClusterConfig:
     permanent_anchor_threshold: float = 0.82
     permanent_merge_threshold: float = 0.94
     permanent_split_variance_threshold: float = 0.45
+    # 关键词双通道 (k-NLPmeans)
+    keyword_weight: float = 0.7              # 嵌入通道权重 (1=纯嵌入, 0=纯关键词)
+    keyword_topk: int = 5                    # 每簇保留的关键词数量
 
 
 @dataclass
