@@ -9,12 +9,7 @@ env.backends.onnx.wasm.wasmPaths = (import.meta as any).env?.DEV
   ? '/node_modules/onnxruntime-web/dist/'
   : './assets/';
 
-// Load model from local files (not HuggingFace)
-// Models are served alongside the page: ./models/Xenova/bge-small-zh-v1.5/
-const pageDir = window.location.href.replace(/\/[^/]*$/, '');
-env.allowLocalModels = true;
-env.remoteHost = pageDir;
-env.remotePathTemplate = 'models/{model}/';
+// Model downloads from HuggingFace, cached in browser IndexedDB
 
 // ═══════════════════════════════════════════════
 //  1. 预处理 (preprocess)
@@ -125,53 +120,28 @@ export class DedupStore {
 // ═══════════════════════════════════════════════
 
 const MODEL_REPO = 'Xenova/bge-small-zh-v1.5';
-const REQUIRED_FILES = ['tokenizer.json','tokenizer_config.json','onnx/model_quantized.onnx','config.json'];
 
 let extractor: any = null;
 let modelLoaded = false;
 
 export function getModelRepo() { return MODEL_REPO; }
-export function getRequiredFiles() { return REQUIRED_FILES; }
 export function isModelReady() { return modelLoaded; }
 
 export async function initAuto(onProgress?: (m: string) => void): Promise<void> {
   if (modelLoaded) return;
-  onProgress?.('Loading model from local files...');
+  onProgress?.('正在下载模型...');
   extractor = await pipeline('feature-extraction', MODEL_REPO, {
-    local_files_only: true,
-    quantized: true,
     progress_callback: (info: any) => {
-      if (info.status === 'progress') onProgress?.(`Loading ${info.file || 'weights'}...`);
+      if (info.status === 'download' && info.file) {
+        onProgress?.(`Downloading ${info.file}...`);
+      } else if (info.status === 'progress') {
+        onProgress?.('Loading weights...');
+      } else if (info.status === 'ready') {
+        onProgress?.('Model ready');
+      }
     },
   });
   modelLoaded = true; onProgress?.('Model ready.');
-}
-
-export async function initFromFiles(files: File[], onProgress?: (m: string) => void): Promise<void> {
-  if (modelLoaded) return;
-  const fileMap = new Map<string, File>();
-  for (const f of files) fileMap.set((f as any).webkitRelativePath || f.name, f);
-  const missing = REQUIRED_FILES.filter(r => !fileMap.has(r));
-  if (missing.length) throw new Error(`Missing: ${missing.join(', ')}\nDownload: https://huggingface.co/${MODEL_REPO}`);
-  onProgress?.('Reading local files...');
-  const blobs = new Map<string, string>();
-  for (const [p, f] of fileMap) blobs.set(p, URL.createObjectURL(f));
-  const orig = globalThis.fetch.bind(globalThis); let n = 0;
-  (globalThis as any).fetch = async (input: any, init?: any) => {
-    const u = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    for (const [p, url] of blobs) {
-      if (u.includes(p) || u.endsWith(p)) { n++; onProgress?.(`Loading ${p} (${n}/${REQUIRED_FILES.length})...`); return orig(url, init); }
-    }
-    return orig(input, init);
-  };
-  try {
-    onProgress?.('Initializing pipeline...');
-    extractor = await pipeline('feature-extraction', MODEL_REPO, { local_files_only: true, quantized: true });
-    modelLoaded = true; onProgress?.('Model loaded from local files!');
-  } finally {
-    globalThis.fetch = orig;
-    for (const url of blobs.values()) URL.revokeObjectURL(url);
-  }
 }
 
 export async function encode(texts: string[]): Promise<number[][]> {

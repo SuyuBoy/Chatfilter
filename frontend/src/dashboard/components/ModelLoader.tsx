@@ -40,7 +40,7 @@ export const ModelLoader: React.FC<{ onReady: () => void }> = ({ onReady }) => {
       }}>
         <h2 style={{ marginBottom: 8, color: 'var(--accent)' }}>Loading Model</h2>
         <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 24 }}>
-          BGE-small-zh-v1.5 (~90MB)
+          BGE-small-zh-v1.5 (~90MB) — 首次下载后浏览器缓存
         </p>
 
         {/* Progress bar */}
