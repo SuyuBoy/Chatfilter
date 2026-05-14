@@ -135,8 +135,9 @@
   <div class="stat"><span class="val" id="st_clusters">0</span><span class="label">聚类</span></div>
   <div class="stat"><span class="val" id="st_slots">40</span><span class="label">槽位</span></div>
   <span class="sep">|</span>
-  <div class="stat"><span class="label">簇心阈值</span><span class="val" style="font-size:14px" id="st_ct">0.40</span></div>
-  <div class="stat"><span class="label">锚点阈值</span><span class="val" style="font-size:14px" id="st_at">0.60</span></div>
+  <div class="stat"><span class="label">预处理</span><span class="val" style="font-size:14px" id="st_prep">—</span></div>
+  <div class="stat"><span class="label">嵌入</span><span class="val" style="font-size:14px" id="st_emb">—</span></div>
+  <div class="stat"><span class="label">聚类</span><span class="val" style="font-size:14px" id="st_clu">—</span></div>
   <span class="sep">|</span>
   <div class="stat"><span class="label">缓存命中</span><span class="val" style="font-size:14px" id="st_cache">—</span></div>
   <span class="sep">|</span>
@@ -146,13 +147,6 @@
 </div>
 
 <div class="ctrlbar">
-  <span style="color:var(--muted)">聚类粒度</span>
-  <label>簇心</label>
-  <input type="text" id="in_ct" value="0.40" style="width:55px;padding:2px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
-  <label>锚点</label>
-  <input type="text" id="in_at" value="0.60" style="width:55px;padding:2px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);text-align:center;">
-  <button id="apply_threshold">应用</button>
-  <span style="color:var(--muted)">|</span>
   <label>卡片宽</label>
   <input type="range" id="card_width" min="160" max="500" value="280" style="width:80px;">
   <span style="font-size:11px;color:var(--muted)" id="card_width_val">280px</span>

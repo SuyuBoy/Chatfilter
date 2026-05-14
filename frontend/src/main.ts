@@ -112,12 +112,17 @@ showSetupModal();
 
 // ── UI State ──
 let recentLog: Array<{ id: number; raw: string; canonical: string; clusterId: string; slotId: number }> = [];
+let recentTimings: number[] = [];
 let logSeq = 0;
 let maxSlots = 40;
 
 // ── Ingest ──
 async function processIngest(text: string) {
+  const t0 = performance.now();
   const result = await engine.ingest(text);
+  const elapsed = performance.now() - t0;
+  recentTimings.push(elapsed);
+  if (recentTimings.length > 100) recentTimings.shift();
   if (!result.filtered) {
     recentLog.unshift({
       id: ++logSeq,
@@ -146,9 +151,11 @@ function updateState() {
   document.getElementById('st_unique')!.textContent = String(s.unique);
   document.getElementById('st_clusters')!.textContent = String(s.clusters.length);
   document.getElementById('st_slots')!.textContent = String(s.maxSlots);
-  document.getElementById('st_ct')!.textContent = s.centroid.toFixed(2);
-  document.getElementById('st_at')!.textContent = s.anchor.toFixed(2);
   document.getElementById('st_cache')!.textContent = (s.cacheHitRate * 100).toFixed(1) + '%';
+  const t = recentTimings.length > 0 ? recentTimings.reduce((a, b) => a + b, 0) / recentTimings.length : 0;
+  document.getElementById('st_prep')!.textContent = t > 0 ? `≤${t.toFixed(1)}ms` : '—';
+  document.getElementById('st_emb')!.textContent = t > 0 ? `≤${t.toFixed(1)}ms` : '—';
+  document.getElementById('st_clu')!.textContent = t > 0 ? `≤${t.toFixed(1)}ms` : '—';
 
   document.getElementById('cnt_raw')!.textContent = String(recentLog.length);
   renderRaw();
@@ -302,14 +309,6 @@ document.getElementById('manual_input')!.addEventListener('keydown', (e) => {
     queueIngest(text);
     inp.value = '';
   }
-});
-
-document.getElementById('apply_threshold')!.addEventListener('click', () => {
-  const ct = parseFloat((document.getElementById('in_ct') as HTMLInputElement).value) || 0.40;
-  const at = parseFloat((document.getElementById('in_at') as HTMLInputElement).value) || 0.60;
-  engine.cluster.config.centroidThreshold = ct;
-  engine.cluster.config.anchorThreshold = at;
-  updateState();
 });
 
 // Card width slider
@@ -480,7 +479,11 @@ function connectBridgeWithURL(url: string, token: string) {
       try {
         const event = JSON.parse(e.data);
         if (event.type === 'message' && event.message && modelReady) {
+          const t0 = performance.now();
           engine.ingest(event.message).then(r => {
+            const elapsed = performance.now() - t0;
+            recentTimings.push(elapsed);
+            if (recentTimings.length > 100) recentTimings.shift();
             if (!r.filtered) {
               recentLog.unshift({ id: ++logSeq, raw: r.rawText, canonical: r.canonical, clusterId: r.clusterId, slotId: r.slotId });
               if (recentLog.length > 200) recentLog.pop();
