@@ -15,6 +15,7 @@ from collections import OrderedDict, Counter
 from dataclasses import dataclass, field
 
 import numpy as np
+from sklearn.cluster import DBSCAN
 
 from config.settings import Settings, get_settings
 from src.engine.micro_cluster import MicroCluster
@@ -195,19 +196,106 @@ class ClusterEngine:
     # ── 周期维护 ──
 
     def maintenance(self, total_ingested: int, cache=None):
-        """每 maintenance_interval 条触发: 合并+拆分+TTL淘汰。"""
+        """每 maintenance_interval 条触发: DBSCAN 重构 + TTL淘汰。"""
         conf = self.settings.cluster
         if total_ingested % conf.maintenance_interval != 0:
             return
-        self._merge_similar(self.slots, conf.merge_threshold)
-        self._split_degraded(self.slots, conf.split_variance_threshold, conf.max_slots, cache)
-        self._merge_similar(self.permanent, conf.permanent_merge_threshold, check_sentiment=True)
-        self._split_degraded(self.permanent, conf.permanent_split_variance_threshold, 9999, cache)
+        self._dbscan_reorganize(self.slots, conf.max_slots, conf.dbscan_eps, cache)
+        self._dbscan_reorganize(self.permanent, 9999, conf.permanent_dbscan_eps, cache)
         now = time.time()
         ttl = self.settings.cluster.permanent_ttl_seconds
         expired = [c for c, s in self.permanent.items() if now - s.last_update > ttl]
         for c in expired:
             del self.permanent[c]
+
+    def _dbscan_reorganize(self, d: OrderedDict, max_slots: int, eps: float, cache=None):
+        """用 DBSCAN 自动重构槽位布局。
+
+        1. 收集所有 slot 的 member embeddings
+        2. DBSCAN(metric='cosine') 自动发现簇结构
+        3. 噪声点 (label=-1) 丢弃 — 一次性弹幕不占槽位
+        4. 每个簇 → 新建/复用 slot，更新 centroid + top_keywords
+        """
+        if len(d) < 3:
+            return  # 太少槽位不值得重构
+
+        # 收集所有 embedding + 元数据
+        all_embs: list[np.ndarray] = []
+        all_meta: list[tuple[SlotState, str]] = []  # (slot, canonical)
+        for canonical, slot in d.items():
+            for emb in slot._member_embeddings:
+                all_embs.append(emb)
+                all_meta.append((slot, canonical))
+
+        if len(all_embs) < 6:
+            return
+
+        # DBSCAN 聚类 (cosine 距离 = 1 - cosine_sim)
+        emb_array = np.array(all_embs)
+        clustering = DBSCAN(eps=eps, min_samples=3, metric='cosine').fit(emb_array)
+        labels = clustering.labels_
+
+        # 按标签分组
+        clusters: dict[int, list[int]] = {}
+        for i, label in enumerate(labels):
+            if label == -1:
+                continue  # 噪声丢弃
+            clusters.setdefault(label, []).append(i)
+
+        if not clusters:
+            return
+
+        # 为每个 DBSCAN 簇构建新 slot
+        new_slots: OrderedDict[str, SlotState] = OrderedDict()
+        slot_id = 1
+        for label, indices in clusters.items():
+            if len(indices) < 2:          # 单点不构成簇
+                continue
+            if slot_id > max_slots:       # 超出槽位限制
+                break
+
+            embs = [all_embs[i] for i in indices]
+            centroid = np.mean(embs, axis=0)
+            centroid = centroid / (np.linalg.norm(centroid) + 1e-8)
+
+            # 选代表性的摘要文本
+            metas = [all_meta[i] for i in indices]
+            total_count = len(indices)
+            texts = list({s.latest_raw for s, _ in metas})
+            canonical = Counter(c for _, c in metas).most_common(1)[0][0]
+
+            # 合并关键词
+            kw_freq: dict[str, int] = {}
+            for s, _ in metas:
+                for kw, cnt in s.keyword_freq.items():
+                    kw_freq[kw] = kw_freq.get(kw, 0) + cnt
+            topk = self.settings.cluster.keyword_topk
+            top_keywords = [w for w, _ in Counter(kw_freq).most_common(topk)]
+
+            # 标记旧 slot 为失效
+            if cache:
+                for s, _ in metas:
+                    cache.mark_invalid(s.cluster_id)
+
+            slot = SlotState(
+                slot_id=slot_id, cluster_id=f"c{slot_id}",
+                canonical_text=canonical[:32], total_count=total_count,
+                top_examples=sorted(texts, key=lambda t: -len(t))[:3],
+                latest_raw=texts[0] if texts else "",
+                last_update=time.time(), centroid=centroid,
+                _canonicals=set(),
+                keyword_freq=kw_freq, top_keywords=top_keywords,
+            )
+            max_ke = self.settings.cluster.max_member_embeddings
+            for emb in embs[:max_ke]:
+                slot._add_member_emb(emb, max_ke)
+
+            new_slots[canonical[:32]] = slot
+            slot_id += 1
+
+        # 原子替换
+        d.clear()
+        d.update(new_slots)
 
     @staticmethod
     def _same_topic_diff_sentiment(a: SlotState, b: SlotState) -> bool:

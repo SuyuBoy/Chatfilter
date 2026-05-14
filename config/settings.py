@@ -38,8 +38,8 @@ class EmbeddingConfig:
 @dataclass
 class ClusterConfig:
     """在线聚类 — Leader-Follower 双阈值 + 周期维护"""
-    centroid_threshold: float = 0.4
-    anchor_threshold: float = 0.6
+    centroid_threshold: float = 0.7
+    anchor_threshold: float = 0.8
     max_slots: int = 40
     merge_threshold: float = 0.92
     split_variance_threshold: float = 0.50
@@ -53,7 +53,10 @@ class ClusterConfig:
     permanent_split_variance_threshold: float = 0.45
     # 关键词双通道 (k-NLPmeans)
     keyword_weight: float = 0.7              # 嵌入通道权重 (1=纯嵌入, 0=纯关键词)
-    keyword_topk: int = 5                    # 每簇保留的关键词数量
+    keyword_topk: int = 100                  # 每簇保留的关键词数量
+    # DBSCAN 周期重整
+    dbscan_eps: float = 0.35                 # 常规槽位 DBSCAN eps (cosine 距离)
+    permanent_dbscan_eps: float = 0.30       # 热点槽位 DBSCAN eps (更严格)
 
 
 @dataclass

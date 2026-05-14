@@ -43,3 +43,5 @@ cluster:
   # 关键词双通道 (k-NLPmeans): alpha=嵌入权重, topk=每簇关键词数
   keyword_weight: 0.7
   keyword_topk: 5
+  dbscan_eps: 0.35
+  permanent_dbscan_eps: 0.30
