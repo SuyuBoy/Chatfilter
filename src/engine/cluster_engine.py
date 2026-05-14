@@ -209,93 +209,146 @@ class ClusterEngine:
             del self.permanent[c]
 
     def _dbscan_reorganize(self, d: OrderedDict, max_slots: int, eps: float, cache=None):
-        """用 DBSCAN 自动重构槽位布局。
+        """增量式 DBSCAN 重整：只合并/拆分有问题的槽位，其余保持不变。
 
-        1. 收集所有 slot 的 member embeddings
-        2. DBSCAN(metric='cosine') 自动发现簇结构
-        3. 噪声点 (label=-1) 丢弃 — 一次性弹幕不占槽位
-        4. 每个簇 → 新建/复用 slot，更新 centroid + top_keywords
+        - 同一 slot 的成员散落多个 DBSCAN 簇 → 拆分
+        - 多个 slot 的成员混在同一 DBSCAN 簇 → 合并
+        - 纯簇（整个 slot 在一个 DBSCAN 簇）→ 不动
+        - 噪声点从所属 slot 移除，剩余不足 2 的 slot 删除
         """
         if len(d) < 3:
-            return  # 太少槽位不值得重构
+            return
 
-        # 收集所有 embedding + 元数据
+        # 收集所有 embedding + 所属 slot
         all_embs: list[np.ndarray] = []
-        all_meta: list[tuple[SlotState, str]] = []  # (slot, canonical)
+        all_slot_keys: list[str] = []  # canonical
         for canonical, slot in d.items():
             for emb in slot._member_embeddings:
                 all_embs.append(emb)
-                all_meta.append((slot, canonical))
+                all_slot_keys.append(canonical)
 
         if len(all_embs) < 6:
             return
 
-        # DBSCAN 聚类 (cosine 距离 = 1 - cosine_sim)
         emb_array = np.array(all_embs)
-        clustering = DBSCAN(eps=eps, min_samples=3, metric='cosine').fit(emb_array)
+        clustering = DBSCAN(eps=eps, min_samples=2, metric='cosine').fit(emb_array)
         labels = clustering.labels_
 
-        # 按标签分组
-        clusters: dict[int, list[int]] = {}
+        # ── 分析：每个 slot 的成员分布在哪些 DBSCAN 簇 ──
+        slot_labels: dict[str, set[int]] = {}
+        label_slots: dict[int, set[str]] = {}
+        noise_by_slot: dict[str, int] = {}
+
         for i, label in enumerate(labels):
+            key = all_slot_keys[i]
             if label == -1:
-                continue  # 噪声丢弃
-            clusters.setdefault(label, []).append(i)
+                noise_by_slot[key] = noise_by_slot.get(key, 0) + 1
+            else:
+                slot_labels.setdefault(key, set()).add(label)
+                label_slots.setdefault(label, set()).add(key)
 
-        if not clusters:
-            return
+        # ── 检测需合并的 slot 组 ──
+        to_merge: list[list[str]] = []
+        for label, src_keys in label_slots.items():
+            non_noise = [k for k in src_keys if k in d]
+            if len(non_noise) >= 2:
+                merged = sorted(non_noise)
+                if merged not in to_merge:
+                    to_merge.append(merged)
 
-        # 为每个 DBSCAN 簇构建新 slot
-        new_slots: OrderedDict[str, SlotState] = OrderedDict()
-        slot_id = 1
-        for label, indices in clusters.items():
-            if len(indices) < 2:          # 单点不构成簇
+        # ── 检测需拆分的 slot ──
+        to_split: list[str] = []
+        for canonical, slot in d.items():
+            lbls = slot_labels.get(canonical, set())
+            if len(lbls) >= 2:
+                to_split.append(canonical)
+
+        # ── 执行合并 ──
+        merged_keys: set[str] = set()
+        for group in to_merge:
+            group = [k for k in group if k in d]
+            if len(group) < 2:
                 continue
-            if slot_id > max_slots:       # 超出槽位限制
-                break
+            target_key = group[0]
+            target = d[target_key]
+            for src_key in group[1:]:
+                if src_key in d and src_key not in merged_keys:
+                    src = d[src_key]
+                    if cache:
+                        cache.mark_invalid(src.cluster_id)
+                    self._absorb(target, src)
+                    del d[src_key]
+                    merged_keys.add(src_key)
 
-            embs = [all_embs[i] for i in indices]
-            centroid = np.mean(embs, axis=0)
-            centroid = centroid / (np.linalg.norm(centroid) + 1e-8)
+        # ── 执行拆分 ──
+        for canonical in to_split:
+            if canonical not in d or canonical in merged_keys:
+                continue
+            slot = d[canonical]
+            embs = slot._member_embeddings
+            if len(embs) < 4:
+                continue
 
-            # 选代表性的摘要文本
-            metas = [all_meta[i] for i in indices]
-            total_count = len(indices)
-            texts = list({s.latest_raw for s, _ in metas})
-            canonical = Counter(c for _, c in metas).most_common(1)[0][0]
+            sub_arr = np.array(embs)
+            sub = DBSCAN(eps=eps * 0.8, min_samples=2, metric='cosine').fit(sub_arr)
 
-            # 合并关键词
-            kw_freq: dict[str, int] = {}
-            for s, _ in metas:
-                for kw, cnt in s.keyword_freq.items():
-                    kw_freq[kw] = kw_freq.get(kw, 0) + cnt
-            topk = self.settings.cluster.keyword_topk
-            top_keywords = [w for w, _ in Counter(kw_freq).most_common(topk)]
+            groups: dict[int, list[int]] = {}
+            for i, lbl in enumerate(sub.labels_):
+                if lbl == -1:
+                    continue
+                groups.setdefault(lbl, []).append(i)
 
-            # 标记旧 slot 为失效
+            if len(groups) < 2:
+                continue
+
+            used_ids = {s.slot_id for k, s in d.items() if k != canonical}
+            new_ids = [i for i in range(1, max_slots + 1) if i not in used_ids]
+            if len(new_ids) < len(groups) - 1:
+                continue
+
+            glist = sorted(groups.items(), key=lambda x: -len(x[1]))
+
+            # 最大子簇留在原 slot
+            g0 = [embs[i] for i in glist[0][1]]
+            c0 = np.mean(g0, axis=0)
+            slot.centroid = c0 / (np.linalg.norm(c0) + 1e-8)
+            slot.total_count = len(g0)
+            slot._member_embeddings = g0
             if cache:
-                for s, _ in metas:
-                    cache.mark_invalid(s.cluster_id)
+                cache.mark_invalid(slot.cluster_id)
 
-            slot = SlotState(
-                slot_id=slot_id, cluster_id=f"c{slot_id}",
-                canonical_text=canonical[:32], total_count=total_count,
-                top_examples=sorted(texts, key=lambda t: -len(t))[:3],
-                latest_raw=texts[0] if texts else "",
-                last_update=time.time(), centroid=centroid,
-                _canonicals=set(),
-                keyword_freq=kw_freq, top_keywords=top_keywords,
-            )
-            max_ke = self.settings.cluster.max_member_embeddings
-            for emb in embs[:max_ke]:
-                slot._add_member_emb(emb, max_ke)
+            for gi, (_, idx) in enumerate(glist[1:]):
+                ge = [embs[i] for i in idx]
+                nid = new_ids[gi]
+                nc = f"{canonical}*{gi+1}"
+                centroid = np.mean(ge, axis=0)
+                centroid = centroid / (np.linalg.norm(centroid) + 1e-8)
+                d[nc] = SlotState(
+                    slot_id=nid, cluster_id=f"c{nid}",
+                    canonical_text=slot.canonical_text,
+                    total_count=len(ge),
+                    top_examples=slot.top_examples[:1],
+                    latest_raw=slot.latest_raw,
+                    last_update=slot.last_update,
+                    centroid=centroid,
+                    _member_embeddings=ge,
+                    keyword_freq=dict(slot.keyword_freq),
+                    top_keywords=list(slot.top_keywords),
+                )
 
-            new_slots[canonical[:32]] = slot
-            slot_id += 1
-
-        # 原子替换
-        d.clear()
-        d.update(new_slots)
+        # ── 噪声清理 ──
+        for canonical, ncount in noise_by_slot.items():
+            slot = d.get(canonical)
+            if slot is None:
+                continue
+            remaining = len(slot._member_embeddings) - ncount
+            if remaining < 2:
+                if cache:
+                    cache.mark_invalid(slot.cluster_id)
+                del d[canonical]
+            else:
+                slot._member_embeddings = slot._member_embeddings[-remaining:]
+                slot.total_count = remaining
 
     @staticmethod
     def _same_topic_diff_sentiment(a: SlotState, b: SlotState) -> bool:

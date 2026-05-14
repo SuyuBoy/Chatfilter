@@ -45,7 +45,7 @@ fi
 
 # 启动发送端
 echo "📤 启动弹幕发送端..."
-.venv/bin/python demo/sender.py --csv demo/弹幕列表.csv --server http://localhost:8766 --speed 60 --batch 2 & # 60倍速发送弹幕
+.venv/bin/python demo/sender.py --csv demo/弹幕列表.csv --server http://localhost:8766 --speed 120 --batch 2 & # 60倍速发送弹幕
 
 echo ""
 echo "══════════════════════════════════════════"
