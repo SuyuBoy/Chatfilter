@@ -209,36 +209,108 @@
 
 <!-- Settings Modal -->
 <div class="overlay" id="settings_overlay" style="display:none">
-  <div class="modal" style="max-width:500px">
+  <div class="modal" style="max-width:560px;max-height:85vh;overflow-y:auto">
     <h2>⚙ 设置</h2>
-    <div style="margin-top:16px;display:flex;flex-direction:column;gap:12px;font-size:13px">
-      <div>
-        <label style="color:var(--muted);display:block;margin-bottom:4px">Bridge 地址</label>
-        <input type="text" id="cfg_bridge_url" placeholder="ws://localhost:9696" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px">
-      </div>
-      <div>
-        <label style="color:var(--muted);display:block;margin-bottom:4px">Bridge Token (可选)</label>
-        <input type="text" id="cfg_bridge_token" placeholder="留空则无认证" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px">
-      </div>
-      <div>
-        <label style="color:var(--muted);display:block;margin-bottom:4px">簇心阈值: <b id="cfg_ct_val">0.40</b></label>
-        <input type="range" id="cfg_ct" min="0.01" max="0.99" step="0.01" value="0.40" style="width:100%">
-      </div>
-      <div>
-        <label style="color:var(--muted);display:block;margin-bottom:4px">锚点阈值: <b id="cfg_at_val">0.60</b></label>
-        <input type="range" id="cfg_at" min="0.01" max="0.99" step="0.01" value="0.60" style="width:100%">
-      </div>
-      <div>
-        <label style="color:var(--muted);display:block;margin-bottom:4px">谐音词 / 变体词 (JSON 文件)</label>
-        <input type="file" id="cfg_variants_file" accept=".json" style="font-size:12px">
-        <span id="cfg_variants_status" style="font-size:11px;color:var(--muted);display:block;margin-top:4px">格式: {"xswl": "笑死我了", "yyds": "永远的神"}</span>
-      </div>
+    <div style="margin-top:16px;display:flex;flex-direction:column;gap:16px;font-size:13px">
+
+      <!-- 连接 -->
+      <fieldset style="border:1px solid var(--border);border-radius:6px;padding:10px 14px">
+        <legend style="font-weight:600;color:var(--accent)">连接</legend>
+        <div style="margin-bottom:8px">
+          <label style="color:var(--muted);display:block;margin-bottom:2px">Bridge 地址</label>
+          <input type="text" id="cfg_bridge_url" placeholder="ws://localhost:9696" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+        </div>
+        <div>
+          <label style="color:var(--muted);display:block;margin-bottom:2px">Token (可选)</label>
+          <input type="text" id="cfg_bridge_token" placeholder="留空" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+        </div>
+      </fieldset>
+
+      <!-- 预处理 -->
+      <fieldset style="border:1px solid var(--border);border-radius:6px;padding:10px 14px">
+        <legend style="font-weight:600;color:var(--accent)">预处理</legend>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label style="color:var(--muted);display:block;margin-bottom:2px">最短文本 (字符)</label>
+            <input type="number" id="cfg_min_text" min="1" max="10" value="1" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </div>
+          <div>
+            <label style="color:var(--muted);display:block;margin-bottom:2px">最长文本 (字符)</label>
+            <input type="number" id="cfg_max_text" min="10" max="512" value="128" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </div>
+          <div>
+            <label style="color:var(--muted);display:block;margin-bottom:2px">SimHash 海明距离</label>
+            <input type="number" id="cfg_simhash_dist" min="1" max="10" value="2" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </div>
+          <div>
+            <label style="color:var(--muted);display:block;margin-bottom:2px">SimHash 最短文本</label>
+            <input type="number" id="cfg_simhash_min" min="4" max="20" value="8" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </div>
+        </div>
+        <div style="margin-top:8px">
+          <label style="color:var(--muted);display:block;margin-bottom:2px">变体词 (JSON 文件)</label>
+          <input type="file" id="cfg_variants_file" accept=".json" style="font-size:11px">
+          <span id="cfg_variants_status" style="font-size:11px;color:var(--muted);display:block;margin-top:2px">格式: {"xswl":"笑死我了"}</span>
+        </div>
+      </fieldset>
+
+      <!-- 嵌入 -->
+      <fieldset style="border:1px solid var(--border);border-radius:6px;padding:10px 14px">
+        <legend style="font-weight:600;color:var(--accent)">嵌入 &amp; 缓存</legend>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label style="color:var(--muted);display:block;margin-bottom:2px">缓存 TTL (秒)</label>
+            <input type="number" id="cfg_cache_ttl" min="60" max="7200" value="600" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </div>
+          <div>
+            <label style="color:var(--muted);display:block;margin-bottom:2px">缓存最大条目</label>
+            <input type="number" id="cfg_cache_size" min="1000" max="100000" value="50000" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </div>
+          <div>
+            <label style="color:var(--muted);display:block;margin-bottom:2px">批量编码大小</label>
+            <input type="number" id="cfg_batch_size" min="1" max="128" value="32" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px">
+          </div>
+          <div>
+            <label style="color:var(--muted);display:block;margin-bottom:2px">模型 (HF repo)</label>
+            <input type="text" id="cfg_model_name" value="Xenova/bge-small-zh-v1.5" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:11px">
+          </div>
+        </div>
+      </fieldset>
+
+      <!-- 聚类 -->
+      <fieldset style="border:1px solid var(--border);border-radius:6px;padding:10px 14px">
+        <legend style="font-weight:600;color:var(--accent)">聚类</legend>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">簇心阈值 <b id="cfg_ct_val">0.40</b></label>
+            <input type="range" id="cfg_ct" min="0.01" max="0.99" step="0.01" value="0.40" style="width:100%"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">锚点阈值 <b id="cfg_at_val">0.60</b></label>
+            <input type="range" id="cfg_at" min="0.01" max="0.99" step="0.01" value="0.60" style="width:100%"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">最大槽位</label>
+            <input type="number" id="cfg_max_slots" min="10" max="100" value="40" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">维护间隔 (条)</label>
+            <input type="number" id="cfg_maint_interval" min="50" max="1000" value="300" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">合并阈值 <b id="cfg_merge_val">0.92</b></label>
+            <input type="range" id="cfg_merge" min="0.5" max="0.99" step="0.01" value="0.92" style="width:100%"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">拆分阈值 <b id="cfg_split_val">0.50</b></label>
+            <input type="range" id="cfg_split" min="0.1" max="0.8" step="0.01" value="0.50" style="width:100%"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">热点提升阈值</label>
+            <input type="number" id="cfg_perm_threshold" min="10" max="1000" value="100" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">热点 TTL (秒)</label>
+            <input type="number" id="cfg_perm_ttl" min="60" max="7200" value="600" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">热点簇心<b id="cfg_pct_val">0.75</b></label>
+            <input type="range" id="cfg_pct" min="0.5" max="0.99" step="0.01" value="0.75" style="width:100%"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:2px">热点锚点<b id="cfg_pat_val">0.82</b></label>
+            <input type="range" id="cfg_pat" min="0.5" max="0.99" step="0.01" value="0.82" style="width:100%"></div>
+        </div>
+      </fieldset>
+
     </div>
     <div style="margin-top:20px;display:flex;gap:12px">
       <button id="btn_save_settings" style="flex:1;padding:8px;font-size:14px;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer">保存设置</button>
       <button id="btn_close_settings" style="flex:1;padding:8px;font-size:14px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer">取消</button>
     </div>
     <button id="btn_settings_connect" style="width:100%;margin-top:8px;padding:8px;font-size:14px;background:var(--green);color:#fff;border:none;border-radius:6px;cursor:pointer">保存设置并连接 Bridge</button>
+    <button id="btn_reset_settings" style="width:100%;margin-top:4px;padding:6px;font-size:12px;background:transparent;color:var(--red);border:1px solid var(--red);border-radius:6px;cursor:pointer">恢复默认设置</button>
   </div>
 </div>
 

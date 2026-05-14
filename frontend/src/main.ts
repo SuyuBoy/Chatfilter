@@ -345,30 +345,40 @@ document.getElementById('file_input')!.addEventListener('change', async (e) => {
 });
 
 // ── Settings + Bridge ──
+
 import { setVariants } from './preprocess';
 
 let bridgeWs: WebSocket | null = null;
 
-// Load saved settings from localStorage
-function loadSettings(): { url: string; token: string; ct: number; at: number; variants: string } {
-  try {
-    return JSON.parse(localStorage.getItem('chatfilter_settings') || '{}');
-  } catch { return {} as any; }
-}
+const DEFAULT_SETTINGS = {
+  url: '', token: '',
+  minText: 1, maxText: 128, simhashDist: 2, simhashMin: 8, variants: '',
+  cacheTtl: 600, cacheSize: 50000, batchSize: 32, modelName: 'Xenova/bge-small-zh-v1.5',
+  ct: 0.40, at: 0.60, maxSlots: 40, maintInterval: 300,
+  mergeTh: 0.92, splitTh: 0.50, permThreshold: 100, permTtl: 600, pct: 0.75, pat: 0.82,
+};
 
-function saveSettings(settings: object) {
-  localStorage.setItem('chatfilter_settings', JSON.stringify(settings));
+function loadSettings(): any {
+  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('chatfilter_settings') || '{}') }; }
+  catch { return { ...DEFAULT_SETTINGS }; }
 }
+function saveSettings(s: any) { localStorage.setItem('chatfilter_settings', JSON.stringify(s)); }
 
-// Settings modal
+// Show settings
 document.getElementById('btn_settings')!.onclick = () => {
   const s = loadSettings();
-  (document.getElementById('cfg_bridge_url') as HTMLInputElement).value = s.url || 'ws://localhost:9696';
-  (document.getElementById('cfg_bridge_token') as HTMLInputElement).value = s.token || '';
-  (document.getElementById('cfg_ct') as HTMLInputElement).value = String(s.ct || 0.40);
-  (document.getElementById('cfg_at') as HTMLInputElement).value = String(s.at || 0.60);
-  (document.getElementById('cfg_ct_val') as HTMLElement).textContent = (s.ct || 0.40).toFixed(2);
-  (document.getElementById('cfg_at_val') as HTMLElement).textContent = (s.at || 0.60).toFixed(2);
+  const setVal = (id: string, val: any) => { const el = document.getElementById(id) as HTMLInputElement; if (el) el.value = String(val); };
+  setVal('cfg_bridge_url', s.url); setVal('cfg_bridge_token', s.token);
+  setVal('cfg_min_text', s.minText); setVal('cfg_max_text', s.maxText);
+  setVal('cfg_simhash_dist', s.simhashDist); setVal('cfg_simhash_min', s.simhashMin);
+  setVal('cfg_cache_ttl', s.cacheTtl); setVal('cfg_cache_size', s.cacheSize);
+  setVal('cfg_batch_size', s.batchSize); setVal('cfg_model_name', s.modelName);
+  setVal('cfg_ct', s.ct); setVal('cfg_at', s.at);
+  setVal('cfg_max_slots', s.maxSlots); setVal('cfg_maint_interval', s.maintInterval);
+  setVal('cfg_merge', s.mergeTh); setVal('cfg_split', s.splitTh);
+  setVal('cfg_perm_threshold', s.permThreshold); setVal('cfg_perm_ttl', s.permTtl);
+  setVal('cfg_pct', s.pct); setVal('cfg_pat', s.pat);
+  updateSliderLabels();
   document.getElementById('settings_overlay')!.style.display = 'flex';
 };
 
@@ -377,113 +387,123 @@ document.getElementById('btn_close_settings')!.onclick = () => {
 };
 
 // Slider live preview
-document.getElementById('cfg_ct')!.oninput = (e) => {
-  document.getElementById('cfg_ct_val')!.textContent = parseFloat((e.target as HTMLInputElement).value).toFixed(2);
-};
-document.getElementById('cfg_at')!.oninput = (e) => {
-  document.getElementById('cfg_at_val')!.textContent = parseFloat((e.target as HTMLInputElement).value).toFixed(2);
-};
+function updateSliderLabels() {
+  const vals: [string, string][] = [
+    ['cfg_ct', 'cfg_ct_val'], ['cfg_at', 'cfg_at_val'],
+    ['cfg_merge', 'cfg_merge_val'], ['cfg_split', 'cfg_split_val'],
+    ['cfg_pct', 'cfg_pct_val'], ['cfg_pat', 'cfg_pat_val'],
+  ];
+  for (const [inp, lbl] of vals) {
+    const v = (document.getElementById(inp) as HTMLInputElement)?.value;
+    if (v) document.getElementById(lbl)!.textContent = parseFloat(v).toFixed(2);
+  }
+}
+['cfg_ct','cfg_at','cfg_merge','cfg_split','cfg_pct','cfg_pat'].forEach(id => {
+  document.getElementById(id)!.oninput = updateSliderLabels;
+});
 
 // Variant file upload
 document.getElementById('cfg_variants_file')!.onchange = async (e) => {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (!file) return;
   try {
-    const text = await file.text();
-    const data = JSON.parse(text);
+    const data = JSON.parse(await file.text());
     if (typeof data !== 'object') throw new Error('Must be a JSON object');
     setVariants(data);
-    const s = loadSettings();
-    s.variants = text;
-    saveSettings(s);
+    const s = loadSettings(); s.variants = JSON.stringify(data); saveSettings(s);
     document.getElementById('cfg_variants_status')!.textContent = `✅ 已加载 ${Object.keys(data).length} 个变体词`;
   } catch (err: any) {
     document.getElementById('cfg_variants_status')!.textContent = `❌ ${err.message}`;
   }
 };
 
-// Save + Connect bridge
-document.getElementById('btn_settings_connect')!.onclick = () => {
-  doSaveSettings();
-  connectBridge();
-  document.getElementById('settings_overlay')!.style.display = 'none';
-};
-
-document.getElementById('btn_save_settings')!.onclick = () => {
-  doSaveSettings();
-  document.getElementById('settings_overlay')!.style.display = 'none';
-};
-
-function doSaveSettings() {
-  const settings = {
-    url: (document.getElementById('cfg_bridge_url') as HTMLInputElement).value,
-    token: (document.getElementById('cfg_bridge_token') as HTMLInputElement).value,
-    ct: parseFloat((document.getElementById('cfg_ct') as HTMLInputElement).value),
-    at: parseFloat((document.getElementById('cfg_at') as HTMLInputElement).value),
+// Gather form → object
+function gatherSettings(): any {
+  const get = (id: string) => (document.getElementById(id) as HTMLInputElement).value;
+  return {
+    url: get('cfg_bridge_url'), token: get('cfg_bridge_token'),
+    minText: +get('cfg_min_text'), maxText: +get('cfg_max_text'),
+    simhashDist: +get('cfg_simhash_dist'), simhashMin: +get('cfg_simhash_min'),
+    cacheTtl: +get('cfg_cache_ttl'), cacheSize: +get('cfg_cache_size'),
+    batchSize: +get('cfg_batch_size'), modelName: get('cfg_model_name'),
+    ct: +get('cfg_ct'), at: +get('cfg_at'),
+    maxSlots: +get('cfg_max_slots'), maintInterval: +get('cfg_maint_interval'),
+    mergeTh: +get('cfg_merge'), splitTh: +get('cfg_split'),
+    permThreshold: +get('cfg_perm_threshold'), permTtl: +get('cfg_perm_ttl'),
+    pct: +get('cfg_pct'), pat: +get('cfg_pat'),
+    variants: loadSettings().variants || '',
   };
-  saveSettings(settings);
-  engine.cluster.config.centroidThreshold = settings.ct;
-  engine.cluster.config.anchorThreshold = settings.at;
-  updateState();
 }
 
-function connectBridge() {
-  disconnectBridge();
-  const s = loadSettings();
-  if (!s.url) return;
+// Apply settings to engine
+function applySettings(s: any) {
+  const c = engine.cluster.config;
+  if (s.ct != null) c.centroidThreshold = s.ct;
+  if (s.at != null) c.anchorThreshold = s.at;
+  if (s.maxSlots != null) c.maxSlots = s.maxSlots;
+  if (s.maintInterval != null) c.maintenanceInterval = s.maintInterval;
+  if (s.mergeTh != null) c.mergeThreshold = s.mergeTh;
+  if (s.splitTh != null) c.splitVarianceThreshold = s.splitTh;
+  if (s.permThreshold != null) c.permanentThreshold = s.permThreshold;
+  if (s.permTtl != null) c.permanentTtlSeconds = s.permTtl;
+  if (s.pct != null) c.permanentCentroidThreshold = s.pct;
+  if (s.pat != null) c.permanentAnchorThreshold = s.pat;
+}
 
+// Buttons
+document.getElementById('btn_save_settings')!.onclick = () => {
+  const s = gatherSettings(); saveSettings(s); applySettings(s);
+  document.getElementById('settings_overlay')!.style.display = 'none';
+  updateState();
+};
+document.getElementById('btn_settings_connect')!.onclick = () => {
+  const s = gatherSettings(); saveSettings(s); applySettings(s);
+  connectBridgeWithURL(s.url, s.token);
+  document.getElementById('settings_overlay')!.style.display = 'none';
+  updateState();
+};
+document.getElementById('btn_reset_settings')!.onclick = () => {
+  localStorage.removeItem('chatfilter_settings');
+  const s = { ...DEFAULT_SETTINGS };
+  saveSettings(s); applySettings(s);
+  document.getElementById('settings_overlay')!.style.display = 'none';
+  updateState();
+};
+
+// Bridge
+function connectBridgeWithURL(url: string, token: string) {
+  disconnectBridge();
+  if (!url) return;
   try {
-    bridgeWs = new WebSocket(s.url, s.token ? ['laplace-event-bridge-role-client', s.token] : ['laplace-event-bridge-role-client']);
+    bridgeWs = new WebSocket(url, token ? ['laplace-event-bridge-role-client', token] : ['laplace-event-bridge-role-client']);
     bridgeWs.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data);
         if (event.type === 'message' && event.message && modelReady) {
-          queueIngestFromBridge(event.message);
+          engine.ingest(event.message).then(r => {
+            if (!r.filtered) {
+              recentLog.unshift({ id: ++logSeq, raw: r.rawText, canonical: r.canonical, clusterId: r.clusterId, slotId: r.slotId });
+              if (recentLog.length > 200) recentLog.pop();
+              updateState();
+            }
+          });
         }
       } catch {}
     };
     bridgeWs.onopen = () => { document.getElementById('model_status')!.textContent = 'Bridge OK'; };
-    bridgeWs.onclose = () => { document.getElementById('model_status')!.textContent = 'Bridge disconnected'; };
-    bridgeWs.onerror = () => { document.getElementById('model_status')!.textContent = 'Bridge error'; };
-  } catch (e) {
-    console.error('Bridge connect failed:', e);
-  }
+    bridgeWs.onclose = () => { document.getElementById('model_status')!.textContent = 'Bridge dc'; };
+    bridgeWs.onerror = () => { document.getElementById('model_status')!.textContent = 'Bridge err'; };
+  } catch (e) { console.error('Bridge:', e); }
 }
-
-function disconnectBridge() {
-  bridgeWs?.close();
-  bridgeWs = null;
-}
-
-function queueIngestFromBridge(text: string) {
-  engine.ingest(text).then(r => {
-    if (!r.filtered) {
-      recentLog.unshift({ id: ++logSeq, raw: r.rawText, canonical: r.canonical, clusterId: r.clusterId, slotId: r.slotId });
-      if (recentLog.length > 200) recentLog.pop();
-      updateState();
-    }
-  });
-}
+function disconnectBridge() { bridgeWs?.close(); bridgeWs = null; }
 
 // Apply saved settings on startup
 function applySavedSettings() {
   const s = loadSettings();
-  if (s.ct) engine.cluster.config.centroidThreshold = s.ct;
-  if (s.at) engine.cluster.config.anchorThreshold = s.at;
-  if (s.variants) {
-    try { setVariants(JSON.parse(s.variants)); } catch {}
-  }
-  // Auto-connect if bridge URL was saved
-  if (s.url && modelReady) setTimeout(connectBridge, 500);
+  if (s.variants) { try { setVariants(JSON.parse(s.variants)); } catch {} }
+  applySettings(s);
+  if (s.url && modelReady) setTimeout(() => connectBridgeWithURL(s.url, s.token), 500);
 }
 
-// Override showSetupModal to auto-connect after model ready
-const origShowSetupModal = showSetupModal;
-showSetupModal = () => origShowSetupModal();
-
-// After model loads, apply settings
-const origHideSetupModal = hideSetupModal;
-hideSetupModal = () => {
-  origHideSetupModal();
-  applySavedSettings();
-};
+const origHideSetupModal2 = hideSetupModal;
+hideSetupModal = () => { origHideSetupModal2(); applySavedSettings(); };

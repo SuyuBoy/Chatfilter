@@ -31,21 +31,21 @@ export async function initAuto(
   onProgress?: (msg: string) => void,
 ): Promise<void> {
   if (modelLoaded) return;
-  onProgress?.('Downloading model from HuggingFace...');
+  onProgress?.('Loading model (first time: ~90MB download, then browser cache)...');
 
   extractor = await pipeline('feature-extraction', MODEL_REPO, {
-    progress_callback: (info: { status: string; file?: string; name?: string }) => {
+    progress_callback: (info) => {
       if (info.status === 'download' && info.file) {
-        onProgress?.(`Downloading ${info.file}...`);
+        onProgress?.(`Downloading ${info.file} (cached after first load)...`);
       } else if (info.status === 'progress') {
-        onProgress?.('Loading weights...');
-      } else if (info.status === 'done' && info.name) {
-        onProgress?.(`Loaded ${info.name}`);
+        onProgress?.('Loading from cache...');
+      } else if (info.status === 'done') {
+        onProgress?.('Model loaded (browser cache active)');
       }
     },
   });
   modelLoaded = true;
-  onProgress?.('Model ready.');
+  onProgress?.('Model ready — cached for next visit.');
 }
 
 /**
