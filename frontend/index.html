@@ -70,6 +70,10 @@
   .cluster-card .member {
     display:inline-block; background:rgba(163,113,247,0.12); color:var(--purple);
     padding:0 4px; border-radius:3px; margin:1px 2px 1px 0;
+    word-break:break-all; max-width:100%;
+  }
+  .cluster-card .canonical {
+    word-break:break-all;
   }
 
   .ctrlbar {
@@ -173,7 +177,7 @@
   </div>
   <div class="col">
     <div class="col-header">语义聚类 <span class="count" id="cnt_clu">0</span></div>
-    <div class="col-body" id="clu_grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px;grid-auto-rows:minmax(52px,auto);align-content:start;"></div>
+    <div class="col-body" id="clu_grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px;grid-auto-rows:1fr;"></div>
   </div>
 </div>
 
